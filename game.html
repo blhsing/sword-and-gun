@@ -176,12 +176,21 @@ addObstacleBox( ARENA, 2, 0, 1, 4, ARENA*2, mats.wall);
 
 function rng() { return Math.random(); }
 
-function randSpot(safe=8) {
-  for (let i=0; i<50; i++) {
+function isInsideAnyObstacle(x, z, radius) {
+  for (const b of obstacles) {
+    if (x > b.minX - radius && x < b.maxX + radius &&
+        z > b.minZ - radius && z < b.maxZ + radius) return true;
+  }
+  return false;
+}
+
+function randSpot(safe=8, clearance=1.0) {
+  for (let i=0; i<80; i++) {
     const x = (rng()*2-1) * (ARENA-5);
     const z = (rng()*2-1) * (ARENA-5);
-    if (Math.abs(x) > safe || Math.abs(z) > safe) return [x, z];
+    if ((Math.abs(x) > safe || Math.abs(z) > safe) && !isInsideAnyObstacle(x, z, clearance)) return [x, z];
   }
+  // Fallback: known safe area
   return [10 + rng()*20, 10 + rng()*20];
 }
 
@@ -338,7 +347,7 @@ function makePack(x, z) {
   packs.push(p);
 }
 for (let i=0; i<12; i++) {
-  const [x, z] = randSpot(10);
+  const [x, z] = randSpot(8, 0);
   makePack(x, z);
 }
 
@@ -556,12 +565,12 @@ function spawnWave(n) {
       const r = 14 + Math.random() * 6;
       makeEnemy(0, 70 + n*8, Math.cos(ang) * r, Math.sin(ang) * r);
     }
-    for (let i=0; i<shooters - closeShooters; i++) { const [x,z] = randSpot(24); makeEnemy(0, 70 + n*8, x, z); }
+    for (let i=0; i<shooters - closeShooters; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(0, 70 + n*8, x, z); }
   } else {
-    for (let i=0; i<shooters; i++) { const [x,z] = randSpot(24); makeEnemy(0, 70 + n*8, x, z); }
+    for (let i=0; i<shooters; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(0, 70 + n*8, x, z); }
   }
-  for (let i=0; i<brawlers; i++) { const [x,z] = randSpot(24); makeEnemy(1, 95 + n*10, x, z); }
-  for (let i=0; i<tanks; i++) { const [x,z] = randSpot(28); makeEnemy(2, 420 + n*55, x, z); }
+  for (let i=0; i<brawlers; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(1, 95 + n*10, x, z); }
+  for (let i=0; i<tanks; i++) { const [x,z] = randSpot(28, 2.5); makeEnemy(2, 420 + n*55, x, z); }
   showBanner(`WAVE ${n}`, 2.0);
   waveInProgress = true;
 }
@@ -826,6 +835,30 @@ function update(dt) {
     moveEnemy(e, e.vel.clone().multiplyScalar(dt));
     e.pos.x = Math.max(-ARENA + 2, Math.min(ARENA - 2, e.pos.x));
     e.pos.z = Math.max(-ARENA + 2, Math.min(ARENA - 2, e.pos.z));
+
+    // Stuck-in-obstacle rescue
+    if (isInsideAnyObstacle(e.pos.x, e.pos.z, e.radius * 0.4)) {
+      let freed = false;
+      for (let ring = 1.5; ring <= 12; ring += 1.0) {
+        for (let a = 0; a < 12; a++) {
+          const ang = a * Math.PI / 6 + Math.random() * 0.3;
+          const tx = e.pos.x + Math.cos(ang) * ring;
+          const tz = e.pos.z + Math.sin(ang) * ring;
+          if (!isInsideAnyObstacle(tx, tz, e.radius) &&
+              Math.abs(tx) < ARENA - 2 && Math.abs(tz) < ARENA - 2) {
+            e.pos.x = tx; e.pos.z = tz;
+            freed = true;
+            break;
+          }
+        }
+        if (freed) break;
+      }
+      if (!freed) {
+        // Last resort: relocate to a fresh random clear spot
+        const [rx, rz] = randSpot(24, e.radius);
+        e.pos.x = rx; e.pos.z = rz;
+      }
+    }
 
     e.group.position.copy(e.pos);
     // Face flat toward target a bit
