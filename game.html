@@ -504,6 +504,23 @@ function handleTankDestroyed() {
   }
 }
 
+// Push entities out of the friendly tank's footprint. Returns true if pushed.
+const TANK_COLLIDE_R = 2.6;
+function pushOutOfTank(pos, radius) {
+  if (!tank.alive) return false;
+  let dx = pos.x - tank.pos.x;
+  let dz = pos.z - tank.pos.z;
+  let d = Math.sqrt(dx*dx + dz*dz);
+  const minD = TANK_COLLIDE_R + radius;
+  if (d >= minD) return false;
+  let nx, nz;
+  if (d < 0.0001) { nx = 1; nz = 0; d = 0.0001; }
+  else { nx = dx / d; nz = dz / d; }
+  pos.x = tank.pos.x + nx * minD;
+  pos.z = tank.pos.z + nz * minD;
+  return true;
+}
+
 function firePlayerWeapon(eye, forward, right) {
   const w = WEAPONS[player.weapon];
   player.cooldown = w.cd;
@@ -764,6 +781,8 @@ function update(dt) {
     if (move.lengthSq() > 0.0001) move.normalize();
     const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 9.5 : 6.2;
     moveCircle2D(player.pos, move.x * speed * dt, move.z * speed * dt, PLAYER_R);
+    // Block walking through the friendly tank
+    pushOutOfTank(player.pos, PLAYER_R);
 
     for (let i = 0; i < 5; i++) if (keys['Digit' + (i+1)]) player.weapon = i;
     if (keys['KeyQ'] && !keys._qLast) player.weapon = (player.weapon + 1) % 5;
@@ -857,6 +876,14 @@ function update(dt) {
         // Last resort: relocate to a fresh random clear spot
         const [rx, rz] = randSpot(24, e.radius);
         e.pos.x = rx; e.pos.z = rz;
+      }
+    }
+
+    // Push out of friendly tank — and take ramming damage if player is driving
+    if (tank.alive) {
+      const pushed = pushOutOfTank(e.pos, e.radius);
+      if (pushed && inTank) {
+        damageEnemy(e, 110 * dt, e.pos.clone().add(new THREE.Vector3(0, 1, 0)));
       }
     }
 
