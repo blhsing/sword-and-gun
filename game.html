@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Sword &amp; Gun — Web Battlefield</title>
+<title>刀劍與槍 — 戰場網頁版</title>
 <style>
   html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#000; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color:#fff; }
   #c { display:block; width:100vw; height:100vh; }
@@ -22,6 +22,13 @@
   #weaponinfo { position:absolute; right:24px; bottom:30px; font-size:22px; font-weight:bold; text-align:right; text-shadow:1px 1px 3px #000; }
   #footer { position:absolute; left:20px; bottom:104px; font-size:12px; opacity:.6; letter-spacing:.3px; }
   #hint { position:absolute; left:50%; top:60%; transform:translateX(-50%); font-size:22px; background:rgba(0,0,0,.65); padding:10px 18px; border-radius:8px; display:none; color:#ff0; font-weight:bold; }
+  #scope { position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .12s; background:radial-gradient(circle at center, transparent 28%, rgba(0,0,0,.85) 32%, #000 50%); }
+  #scope.on { opacity:1; }
+  #scope .ring { position:absolute; left:50%; top:50%; width:60vh; height:60vh; transform:translate(-50%,-50%); border:2px solid #000; border-radius:50%; box-shadow: 0 0 0 1px rgba(255,255,255,.3) inset; }
+  #scope .line-h, #scope .line-v { position:absolute; left:50%; top:50%; background:#000; }
+  #scope .line-h { width:60vh; height:1px; transform:translate(-50%,-50%); }
+  #scope .line-v { width:1px; height:60vh; transform:translate(-50%,-50%); }
+  #scope .tick { position:absolute; background:#000; }
   #banner { position:absolute; left:50%; top:30%; transform:translateX(-50%); font-size:54px; font-weight:bold; letter-spacing:6px; color:#ff8; text-shadow:0 0 16px rgba(0,0,0,.9), 2px 2px 0 #000; opacity:0; transition:opacity .25s; pointer-events:none; }
   #banner.show { opacity:1; }
   #overlay { position:absolute; inset:0; background:rgba(15,20,40,.88); display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:auto; cursor:pointer; text-align:center; }
@@ -39,21 +46,22 @@
 <div id="hud">
   <div id="crosshair"></div>
   <div id="viewmodel"></div>
-  <div id="hpbar"><div id="hpfill"></div><div id="hptext">HP 180/180</div></div>
-  <div id="tankbar"><div id="tankfill"></div><div id="tanktext">TANK 600/600</div></div>
+  <div id="hpbar"><div id="hpfill"></div><div id="hptext">生命 180/180</div></div>
+  <div id="tankbar"><div id="tankfill"></div><div id="tanktext">坦克 600/600</div></div>
   <div id="waveinfo"></div>
   <div id="weaponinfo"></div>
-  <div id="footer">WASD move · Shift sprint · Mouse aim · LMB attack · 1-5 weapon · Q next · R reload · F enter/exit tank · P/ESC pause</div>
+  <div id="footer">WASD 移動 · Shift 衝刺 · 滑鼠瞄準 · 左鍵攻擊 · 右鍵瞄準鏡 · 1-6 切武器 · Q 下一把 · R 換彈 · F 上下坦克 · P/ESC 暫停</div>
   <div id="hint"></div>
   <div id="banner"></div>
+  <div id="scope"><div class="ring"></div><div class="line-h"></div><div class="line-v"></div></div>
 </div>
 <div id="overlay">
-  <h1 id="title">SWORD &amp; GUN</h1>
-  <div class="sub" id="subtitle">Click to start</div>
+  <h1 id="title">刀劍與槍</h1>
+  <div class="sub" id="subtitle">點擊開始</div>
   <div class="controls">
-    <b>1</b> Pistol &nbsp; <b>2</b> SMG &nbsp; <b>3</b> Machine Gun &nbsp; <b>4</b> RPG &nbsp; <b>5</b> Sword<br>
-    <b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>Mouse</b> aim &nbsp; <b>LMB</b> attack &nbsp; <b>Q</b> next weapon &nbsp; <b>R</b> reload<br>
-    <b>F</b> enter/exit friendly tank &nbsp; <b>P</b> or <b>ESC</b> pause
+    <b>1</b> 手槍 &nbsp; <b>2</b> 衝鋒槍 &nbsp; <b>3</b> 機關槍 &nbsp; <b>4</b> 火箭筒 &nbsp; <b>5</b> 刀劍 &nbsp; <b>6</b> 狙擊槍<br>
+    <b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br>
+    <b>F</b> 上/下友軍坦克 &nbsp; <b>P</b> 或 <b>ESC</b> 暫停
   </div>
 </div>
 
@@ -98,11 +106,12 @@ const PLAYER_R = 0.45;
 const PLAYER_MAX_HP = 180;
 
 const WEAPONS = [
-  { name:'Pistol',      mag:16, dmg:24,  cd:0.22,  reload:1.0,  range:75,  explosive:false, spread:0.012, full:false },
-  { name:'SMG',         mag:40, dmg:13,  cd:0.055, reload:1.45, range:58,  explosive:false, spread:0.035, full:true  },
-  { name:'Machine Gun', mag:90, dmg:18,  cd:0.085, reload:2.2,  range:85,  explosive:false, spread:0.028, full:true  },
-  { name:'RPG',         mag:5,  dmg:115, cd:0.9,   reload:2.5,  range:100, explosive:true,  spread:0,     full:false },
-  { name:'Sword',       mag:0,  dmg:280, cd:0.35,  reload:0,    range:4.0, explosive:false, spread:0,     full:false },
+  { name:'手槍',   mag:16, dmg:24,  cd:0.22,  reload:1.0,  range:75,  explosive:false, spread:0.012, full:false, melee:false, sniper:false },
+  { name:'衝鋒槍', mag:40, dmg:13,  cd:0.055, reload:1.45, range:58,  explosive:false, spread:0.035, full:true,  melee:false, sniper:false },
+  { name:'機關槍', mag:90, dmg:18,  cd:0.085, reload:2.2,  range:85,  explosive:false, spread:0.028, full:true,  melee:false, sniper:false },
+  { name:'火箭筒', mag:5,  dmg:115, cd:0.9,   reload:2.5,  range:100, explosive:true,  spread:0,     full:false, melee:false, sniper:false },
+  { name:'刀劍',   mag:0,  dmg:280, cd:0.35,  reload:0,    range:4.0, explosive:false, spread:0,     full:false, melee:true,  sniper:false },
+  { name:'狙擊槍', mag:5,  dmg:180, cd:1.0,   reload:2.2,  range:220, explosive:false, spread:0,     full:false, melee:false, sniper:true  },
 ];
 
 // ============ Materials & geometry ============
@@ -217,7 +226,7 @@ const player = {
   yaw: 0, pitch: 0,
   hp: PLAYER_MAX_HP,
   weapon: 0,
-  ammo: [16, 40, 90, 5, 0],
+  ammo: [16, 40, 90, 5, 0, 5],
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
@@ -524,7 +533,7 @@ function pushOutOfTank(pos, radius) {
 function firePlayerWeapon(eye, forward, right) {
   const w = WEAPONS[player.weapon];
   player.cooldown = w.cd;
-  if (w.name === 'Sword') {
+  if (w.melee) {
     player.swordAnim = 0.3;
     for (const e of enemies) {
       if (!e.alive) continue;
@@ -555,7 +564,7 @@ function firePlayerWeapon(eye, forward, right) {
   }
   const hit = hitscan(eye, dir, w.range);
   if (hit.enemy) damageEnemy(hit.enemy, w.dmg, hit.point);
-  fireTracer(muzzle, hit.point, w.name === 'Machine Gun' ? 0xff7700 : 0xffdd33);
+  fireTracer(muzzle, hit.point, w.sniper ? 0xffffff : (w.name === '機關槍' ? 0xff7700 : 0xffdd33));
 }
 
 function fireEnemyBullet(from, target, damage, speed, radius) {
@@ -588,7 +597,7 @@ function spawnWave(n) {
   }
   for (let i=0; i<brawlers; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(1, 95 + n*10, x, z); }
   for (let i=0; i<tanks; i++) { const [x,z] = randSpot(28, 2.5); makeEnemy(2, 420 + n*55, x, z); }
-  showBanner(`WAVE ${n}`, 2.0);
+  showBanner(`第 ${n} 波`, 2.0);
   waveInProgress = true;
 }
 
@@ -610,13 +619,18 @@ spawnWave(1);
 // ============ Input ============
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
-let mouseDown = false, mousePressed = false;
+let mouseDown = false, mousePressed = false, rmbDown = false;
 window.addEventListener('keydown', e => { keys[e.code] = true; });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('mousedown', e => {
   if (e.button === 0) { mouseDown = true; mousePressed = true; }
+  if (e.button === 2) { rmbDown = true; }
 });
-window.addEventListener('mouseup', e => { if (e.button === 0) mouseDown = false; });
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) mouseDown = false;
+  if (e.button === 2) rmbDown = false;
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('mousemove', e => {
   if (document.pointerLockElement === canvas) {
     mouseDX += e.movementX;
@@ -655,9 +669,9 @@ document.addEventListener('pointerlockchange', () => {
   } else {
     if (!gameOver && started) {
       paused = true;
-      titleEl.textContent = 'PAUSED';
+      titleEl.textContent = '暫停';
       titleEl.style.color = '#fff';
-      subtitleEl.textContent = 'Click to resume — or press P';
+      subtitleEl.textContent = '點擊或按 P 繼續';
       overlay.classList.remove('hide');
     }
   }
@@ -681,7 +695,7 @@ function restart() {
   player.yaw = 0; player.pitch = 0;
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
-  player.ammo = [16, 40, 90, 5, 0];
+  player.ammo = [16, 40, 90, 5, 0, 5];
   player.reload = 0; player.cooldown = 0; player.swordAnim = 0;
 
   tank.pos.set(0, 0, 9); tank.yaw = 0; tank.hp = tank.maxHp; tank.fireCd = 0;
@@ -696,9 +710,9 @@ function restart() {
   waveDelay = 0; waveInProgress = false;
   spawnWave(1);
 
-  titleEl.textContent = 'SWORD & GUN';
+  titleEl.textContent = '刀劍與槍';
   titleEl.style.color = '#fff';
-  subtitleEl.textContent = 'Click to start';
+  subtitleEl.textContent = '點擊開始';
 }
 
 // ============ Update logic ============
@@ -709,14 +723,15 @@ const tmpEye = new THREE.Vector3();
 
 function update(dt) {
   // Mouse look (drives player yaw/pitch in both modes)
+  const sensScale = currentFov / BASE_FOV;
   if (inTank) {
-    tank.yaw -= mouseDX * 0.0022;
-    player.pitch -= mouseDY * 0.0022;
+    tank.yaw -= mouseDX * 0.0022 * sensScale;
+    player.pitch -= mouseDY * 0.0022 * sensScale;
     player.pitch = Math.max(-1.0, Math.min(1.0, player.pitch));
     player.yaw = tank.yaw;
   } else {
-    player.yaw -= mouseDX * 0.0028;
-    player.pitch -= mouseDY * 0.0028;
+    player.yaw -= mouseDX * 0.0028 * sensScale;
+    player.pitch -= mouseDY * 0.0028 * sensScale;
     player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
   }
   mouseDX = 0; mouseDY = 0;
@@ -784,8 +799,8 @@ function update(dt) {
     // Block walking through the friendly tank
     pushOutOfTank(player.pos, PLAYER_R);
 
-    for (let i = 0; i < 5; i++) if (keys['Digit' + (i+1)]) player.weapon = i;
-    if (keys['KeyQ'] && !keys._qLast) player.weapon = (player.weapon + 1) % 5;
+    for (let i = 0; i < WEAPONS.length; i++) if (keys['Digit' + (i+1)]) player.weapon = i;
+    if (keys['KeyQ'] && !keys._qLast) player.weapon = (player.weapon + 1) % WEAPONS.length;
     keys._qLast = !!keys['KeyQ'];
 
     const w = WEAPONS[player.weapon];
@@ -1003,7 +1018,7 @@ function update(dt) {
   if (enemies.length === 0 && waveInProgress) {
     waveInProgress = false;
     if (wave >= 8) { won = true; gameOver = true; }
-    else { waveDelay = 2.5; showBanner(`WAVE ${wave} CLEAR!`, 2.0); }
+    else { waveDelay = 2.5; showBanner(`第 ${wave} 波完成！`, 2.0); }
   }
   if (waveDelay > 0) {
     waveDelay -= dt;
@@ -1085,6 +1100,9 @@ function updateAlly(dt) {
 }
 
 // ============ Camera & rendering ============
+const BASE_FOV = 75;
+const scopeEl = document.getElementById('scope');
+let currentFov = BASE_FOV;
 function updateCamera() {
   if (inTank && tank.alive) {
     camera.position.copy(tank.pos).add(new THREE.Vector3(0, 2.7, 0));
@@ -1098,6 +1116,26 @@ function updateCamera() {
   );
   camera.lookAt(camera.position.clone().add(fwd));
 
+  // Zoom/aim down sights
+  const w = WEAPONS[player.weapon];
+  let targetFov = BASE_FOV;
+  if (started && !paused && !gameOver && rmbDown && !inTank) {
+    targetFov = w.sniper ? 18 : 50;
+  }
+  // Smooth FOV
+  currentFov += (targetFov - currentFov) * 0.25;
+  if (Math.abs(currentFov - targetFov) < 0.1) currentFov = targetFov;
+  if (Math.abs(camera.fov - currentFov) > 0.05) {
+    camera.fov = currentFov;
+    camera.updateProjectionMatrix();
+  }
+  // Scope overlay only for sniper at high zoom
+  if (w.sniper && rmbDown && started && !paused && !gameOver && !inTank && currentFov < 30) {
+    scopeEl.classList.add('on');
+  } else {
+    scopeEl.classList.remove('on');
+  }
+
   tank.group.position.copy(tank.pos);
   tank.group.rotation.y = tank.yaw;
 }
@@ -1107,38 +1145,46 @@ function svgViewModel(weaponName) {
   if (!started) return '';
   if (inTank) return '';
   switch (weaponName) {
-    case 'Pistol':
+    case '手槍':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
         <rect x="200" y="320" width="60" height="50" fill="#5a3920"/>
         <rect x="195" y="270" width="120" height="40" fill="#454850"/>
         <rect x="305" y="280" width="40" height="20" fill="#3a3d44"/>
       </svg>`;
-    case 'SMG':
+    case '衝鋒槍':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
         <rect x="195" y="320" width="50" height="55" fill="#3a3d44"/>
         <rect x="180" y="270" width="170" height="40" fill="#3f4248"/>
         <rect x="340" y="280" width="40" height="20" fill="#2f3238"/>
         <rect x="220" y="305" width="40" height="40" fill="#252830"/>
       </svg>`;
-    case 'Machine Gun':
+    case '機關槍':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
         <rect x="180" y="320" width="60" height="55" fill="#3a3d44"/>
         <rect x="170" y="260" width="180" height="50" fill="#33363c"/>
         <rect x="340" y="270" width="65" height="30" fill="#28292e"/>
         <rect x="200" y="240" width="50" height="20" fill="#5a5d65"/>
       </svg>`;
-    case 'RPG':
+    case '火箭筒':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
         <rect x="180" y="320" width="55" height="50" fill="#3a3d44"/>
         <rect x="100" y="265" width="280" height="55" fill="#3a5938" rx="6"/>
         <rect x="160" y="245" width="60" height="20" fill="#2c4527"/>
         <polygon points="100,265 50,290 100,320" fill="#dc4422"/>
       </svg>`;
-    case 'Sword':
+    case '刀劍':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
         <rect x="220" y="340" width="50" height="40" fill="#6b3e1f"/>
         <rect x="200" y="320" width="90" height="22" fill="#b09030"/>
         <polygon points="240,320 270,320 350,80 320,60" fill="#d8dce0" stroke="#88898d" stroke-width="2"/>
+      </svg>`;
+    case '狙擊槍':
+      return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
+        <rect x="195" y="325" width="60" height="55" fill="#2a2d33"/>
+        <rect x="100" y="280" width="280" height="32" fill="#26282d"/>
+        <rect x="155" y="252" width="120" height="20" fill="#1d1f22"/>
+        <circle cx="215" cy="262" r="14" fill="#0c0d0f" stroke="#3a3d44" stroke-width="2"/>
+        <rect x="375" y="285" width="20" height="22" fill="#3a3d44"/>
       </svg>`;
   }
   return '';
@@ -1157,17 +1203,17 @@ function updateHud() {
   } else {
     tankbar.style.display = 'none';
   }
-  waveinfo.innerHTML = `Wave ${wave}/8<br>Score ${score}<br>Enemies ${enemies.length}`;
+  waveinfo.innerHTML = `第 ${wave}/8 波<br>分數 ${score}<br>敵人 ${enemies.length}`;
   if (inTank) {
-    weaponinfo.textContent = 'TANK GUN (F to exit)';
+    weaponinfo.textContent = '坦克炮 (按 F 下車)';
   } else {
-    const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? ' reloading…' : ` ${player.ammo[player.weapon]}/${w.mag}`);
+    const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? ' 換彈中…' : ` ${player.ammo[player.weapon]}/${w.mag}`);
     weaponinfo.textContent = `${player.weapon + 1}. ${w.name}${ammoTxt}`;
   }
 
   if (started && !inTank && tank.alive && player.pos.distanceTo(tank.pos) < 5 && !gameOver) {
     hint.style.display = 'block';
-    hint.textContent = 'Press F to enter tank';
+    hint.textContent = '按 F 上坦克';
   } else {
     hint.style.display = 'none';
   }
@@ -1180,9 +1226,9 @@ function updateHud() {
   }
 
   if (gameOver) {
-    titleEl.textContent = won ? 'VICTORY!' : 'YOU DIED';
+    titleEl.textContent = won ? '勝利！' : '你死了';
     titleEl.style.color = won ? '#5f5' : '#f55';
-    subtitleEl.textContent = `Score ${score} — Click to restart`;
+    subtitleEl.textContent = `分數 ${score}　點擊重玩`;
     overlay.classList.remove('hide');
   }
 }
