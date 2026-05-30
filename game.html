@@ -51,7 +51,7 @@
   <div id="tankbar"><div id="tankfill"></div><div id="tanktext">坦克 600/600</div></div>
   <div id="waveinfo"></div>
   <div id="weaponinfo"></div>
-  <div id="footer">WASD 移動 · Shift 衝刺 · 滑鼠瞄準 · 左鍵攻擊 · 右鍵瞄準鏡 · 1-6 切武器 · Q 下一把 · R 換彈 · F 上下坦克 · P/ESC 暫停</div>
+  <div id="footer">WASD 移動 · Shift 衝刺 · 空白鍵 跳躍 · 滑鼠瞄準 · 左鍵攻擊 · 右鍵瞄準鏡 · 1-6 切武器 · Q 下一把 · R 換彈 · F 上下坦克 · P/ESC 暫停</div>
   <div id="hint"></div>
   <div id="banner"></div>
   <div id="scope"><div class="ring"></div><div class="line-h"></div><div class="line-v"></div></div>
@@ -62,7 +62,7 @@
   <div class="sub" id="subtitle">點擊開始</div>
   <div class="controls">
     <b>1</b> 手槍 &nbsp; <b>2</b> 衝鋒槍 &nbsp; <b>3</b> 機關槍 &nbsp; <b>4</b> 火箭筒 &nbsp; <b>5</b> 刀劍 &nbsp; <b>6</b> 狙擊槍<br>
-    <b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br>
+    <b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>空白</b> 跳躍 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br>
     <b>F</b> 上/下友軍坦克 &nbsp; <b>P</b> 或 <b>ESC</b> 暫停
   </div>
 </div>
@@ -171,6 +171,9 @@ scene.add(sun);
 const ARENA = 78;
 const PLAYER_R = 0.45;
 const PLAYER_MAX_HP = 180;
+const STEP_HEIGHT = 0.55;
+const GRAVITY = 24;
+const JUMP_VEL = 11;
 
 const WEAPONS = [
   { name:'手槍',   mag:16, dmg:24,  cd:0.22,  reload:1.0,  range:75,  explosive:false, spread:0.012, full:false, melee:false, sniper:false, sfx:'pistol' },
@@ -309,6 +312,25 @@ addObstacleBox(0, 0.05, 0, 12, 0.1, 12, mats.plat, false);
 addObstacleBox(-42, 0.1, 38, 20, 0.2, 16, mats.platBlue, false);
 addObstacleBox(38, 0.1, -45, 22, 0.2, 18, mats.platBlue, false);
 
+// Climbable multi-tier buildings around the map
+const buildingMat = new THREE.MeshLambertMaterial({ color: 0x6a5e85 });
+const buildingMatTop = new THREE.MeshLambertMaterial({ color: 0x8678a5 });
+const stairMat = new THREE.MeshLambertMaterial({ color: 0x7a6c95 });
+[
+  [42, 28], [-42, 28], [42, -28], [-42, -28],
+  [0, 50], [0, -50]
+].forEach(([cx, cz]) => {
+  // Stair set on south side (3 steps, each 0.5m tall — walked up via step-up)
+  addObstacleBox(cx, 0.25, cz - 4, 3, 0.5, 1.5, stairMat);
+  addObstacleBox(cx, 0.75, cz - 2.5, 3, 1.5, 1.5, stairMat);
+  // Tier 1 platform (1.5m top): 6x6 floor
+  addObstacleBox(cx, 0.75, cz, 6, 1.5, 6, buildingMat);
+  // Tier 2 platform: 4x4 at 2.5m top, offset to allow walking around
+  addObstacleBox(cx + 1, 2.0, cz + 1, 4, 1.0, 4, buildingMat);
+  // Tier 3 roof: 3x3 at 3.5m top
+  addObstacleBox(cx + 2, 3.0, cz + 2, 3, 1.0, 3, buildingMatTop);
+});
+
 // ============ Player state ============
 const player = {
   pos: new THREE.Vector3(0, 1.7, 0),
@@ -320,6 +342,9 @@ const player = {
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
+  velY: 0,
+  onGround: true,
+  prevJump: false,
 };
 let score = 0, wave = 1, gameOver = false, won = false, started = false, paused = false;
 let waveDelay = 0;    // countdown before next wave spawns
@@ -544,22 +569,36 @@ function updateTrailLine(line, currentPos, dir) {
 }
 
 // ============ Math helpers ============
-function moveCircle2D(pos, dx, dz, radius) {
-  // Axis-separated movement against obstacles, returns new pos
+function moveCircle2D(pos, dx, dz, radius, feetY) {
+  // Axis-separated movement against obstacles, with step-up support
+  // An obstacle whose top is within STEP_HEIGHT above current feet is walkable
+  // An obstacle whose top is at-or-below current feet is "ground" we're on
   let nx = pos.x + dx, nz = pos.z;
   for (const b of obstacles) {
     if (nx > b.minX - radius && nx < b.maxX + radius && nz > b.minZ - radius && nz < b.maxZ + radius) {
+      if (b.maxY <= (feetY ?? 0) + STEP_HEIGHT + 0.01) continue;
       nx = pos.x; break;
     }
   }
   let nz2 = pos.z + dz;
   for (const b of obstacles) {
     if (nx > b.minX - radius && nx < b.maxX + radius && nz2 > b.minZ - radius && nz2 < b.maxZ + radius) {
+      if (b.maxY <= (feetY ?? 0) + STEP_HEIGHT + 0.01) continue;
       nz2 = pos.z; break;
     }
   }
   pos.x = Math.max(-ARENA + 1, Math.min(ARENA - 1, nx));
   pos.z = Math.max(-ARENA + 1, Math.min(ARENA - 1, nz2));
+}
+
+function highestGroundUnder(x, z, maxAllowedTop) {
+  let g = 0;
+  for (const b of obstacles) {
+    if (x > b.minX && x < b.maxX && z > b.minZ && z < b.maxZ) {
+      if (b.maxY > g && b.maxY <= maxAllowedTop + 0.01) g = b.maxY;
+    }
+  }
+  return g;
 }
 
 function pointInObstacle(x, y, z) {
@@ -782,7 +821,11 @@ spawnWave(1);
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
 let mouseDown = false, mousePressed = false, rmbDown = false;
-window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keydown', e => {
+  // Prevent space from scrolling the page when game is focused
+  if (e.code === 'Space' && document.pointerLockElement === canvas) e.preventDefault();
+  keys[e.code] = true;
+});
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('mousedown', e => {
   if (e.button === 0) { mouseDown = true; mousePressed = true; }
@@ -894,6 +937,9 @@ function restart() {
   for (const p of packs) { p.active = true; p.respawn = 0; p.group.visible = true; }
 
   player.pos.set(0, 1.7, 0);
+  player.velY = 0;
+  player.onGround = true;
+  player.prevJump = false;
   player.yaw = 0; player.pitch = 0;
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
@@ -958,6 +1004,8 @@ function update(dt) {
       const side = new THREE.Vector3(Math.sin(tank.yaw + Math.PI/2), 0, Math.cos(tank.yaw + Math.PI/2));
       player.pos.copy(tank.pos).add(side.multiplyScalar(4));
       player.pos.y = 1.7;
+      player.velY = 0;
+      player.onGround = true;
     }
   }
   prevF = fNow;
@@ -1001,9 +1049,39 @@ function update(dt) {
     if (keys['KeyA']) move.sub(tmpRight);
     if (move.lengthSq() > 0.0001) move.normalize();
     const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? 9.5 : 6.2;
-    moveCircle2D(player.pos, move.x * speed * dt, move.z * speed * dt, PLAYER_R);
-    // Block walking through the friendly tank
+
+    // Horizontal move (allows step-up onto low obstacles)
+    const feetY = player.pos.y - 1.7;
+    moveCircle2D(player.pos, move.x * speed * dt, move.z * speed * dt, PLAYER_R, feetY);
     pushOutOfTank(player.pos, PLAYER_R);
+
+    // Vertical: gravity, jumping, landing
+    const groundY = highestGroundUnder(player.pos.x, player.pos.z, feetY + STEP_HEIGHT);
+    const jumpKey = keys['Space'];
+    if (player.onGround) {
+      if (groundY < feetY - 0.1) {
+        // Walked off an edge
+        player.onGround = false;
+      } else {
+        // Snap to (possibly stepped-up) ground
+        player.pos.y = groundY + 1.7;
+        if (jumpKey && !player.prevJump) {
+          player.velY = JUMP_VEL;
+          player.onGround = false;
+        }
+      }
+    }
+    player.prevJump = jumpKey;
+    if (!player.onGround) {
+      player.velY -= GRAVITY * dt;
+      let nextFeet = (player.pos.y - 1.7) + player.velY * dt;
+      if (player.velY <= 0 && nextFeet <= groundY) {
+        nextFeet = groundY;
+        player.velY = 0;
+        player.onGround = true;
+      }
+      player.pos.y = nextFeet + 1.7;
+    }
 
     for (let i = 0; i < WEAPONS.length; i++) if (keys['Digit' + (i+1)] && player.owned[i]) player.weapon = i;
     if (keys['KeyQ'] && !keys._qLast) {
