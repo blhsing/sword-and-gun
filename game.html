@@ -699,30 +699,34 @@ function fireEnemyBullet(from, target, damage, speed, radius) {
 
 // ============ Spawn waves ============
 function spawnWave(n) {
-  const shooters = 4 + n*2;
-  const brawlers = 2 + n;
-  const tanks = 1 + Math.floor(n/2);
-  // First wave: spawn a couple enemies close to player so they see action immediately
+  // Easier curve: wave 1 is only 2 shooters (warm-up), tanks delayed to wave 4
+  const shooters = 1 + n;
+  const brawlers = Math.max(0, n - 1);
+  const tanks = Math.max(0, Math.floor((n - 2) / 2));
   if (n === 1) {
-    const closeShooters = 2;
-    for (let i=0; i<closeShooters; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const r = 14 + Math.random() * 6;
-      makeEnemy(0, 70 + n*8, Math.cos(ang) * r, Math.sin(ang) * r);
+    // Two close-ish shooters so the player has something to engage immediately, but not surrounded
+    for (let i = 0; i < shooters; i++) {
+      const ang = (i / shooters) * Math.PI * 2 + Math.random() * 0.5;
+      const r = 16 + Math.random() * 8;
+      makeEnemy(0, 50 + n * 8, Math.cos(ang) * r, Math.sin(ang) * r);
     }
-    for (let i=0; i<shooters - closeShooters; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(0, 70 + n*8, x, z); }
   } else {
-    for (let i=0; i<shooters; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(0, 70 + n*8, x, z); }
+    for (let i = 0; i < shooters; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(0, 50 + n * 8, x, z); }
   }
-  for (let i=0; i<brawlers; i++) { const [x,z] = randSpot(24, 1.0); makeEnemy(1, 95 + n*10, x, z); }
-  for (let i=0; i<tanks; i++) { const [x,z] = randSpot(28, 2.5); makeEnemy(2, 420 + n*55, x, z); }
+  for (let i = 0; i < brawlers; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(1, 80 + n * 10, x, z); }
+  for (let i = 0; i < tanks; i++) { const [x, z] = randSpot(28, 2.5); makeEnemy(2, 380 + n * 55, x, z); }
   showBanner(`第 ${n} 波`, 2.0);
   SFX.waveStart();
   waveInProgress = true;
+  graceTimer = 2.5; // 2.5s of safety before enemies can attack
+  // Clear any in-flight enemy bullets (paused-frozen ones, etc.)
+  for (const b of enemyBullets) scene.remove(b.mesh);
+  enemyBullets.length = 0;
 }
 
 const banner = document.getElementById('banner');
 let bannerTimer = 0;
+let graceTimer = 0;
 function showBanner(text, sec) {
   banner.textContent = text;
   banner.classList.add('show');
@@ -821,6 +825,11 @@ document.addEventListener('pointerlockchange', () => {
     mouseDX = 0; mouseDY = 0;
     mouseDown = false; mousePressed = false;
     for (const k of Object.keys(keys)) keys[k] = false;
+    // Grace period whenever we start or resume — clears frozen bullets and
+    // gives the player a moment to orient before enemies attack
+    graceTimer = Math.max(graceTimer, 1.5);
+    for (const b of enemyBullets) scene.remove(b.mesh);
+    enemyBullets.length = 0;
   } else {
     if (!gameOver && started) {
       paused = true;
@@ -1001,7 +1010,7 @@ function update(dt) {
         const s = new THREE.Vector3(-dn.z, 0, dn.x);
         moveEnemy(e, s.multiplyScalar((e.strafeDir ? 1.9 : -1.9) * dt));
       }
-      if (e.attackCd <= 0 && d < 45) {
+      if (e.attackCd <= 0 && d < 45 && graceTimer <= 0) {
         e.attackCd = 1.1;
         const from = e.pos.clone().add(new THREE.Vector3(0, 1.1, 0));
         const tgt = target.clone().add(new THREE.Vector3(0, 0.5, 0));
@@ -1009,14 +1018,14 @@ function update(dt) {
       }
     } else if (e.type === 1) {
       if (d > 1.9) moveEnemy(e, dn.clone().multiplyScalar(5.2 * dt));
-      if (d < 2.3 && e.attackCd <= 0) {
+      if (d < 2.3 && e.attackCd <= 0 && graceTimer <= 0) {
         e.attackCd = 0.85;
         damageFriendlyAt(target, 18, e.pos);
       }
     } else {
       if (d > 28) moveEnemy(e, dn.clone().multiplyScalar(1.4 * dt));
       else if (d < 16) moveEnemy(e, dn.clone().multiplyScalar(-0.8 * dt));
-      if (e.attackCd <= 0 && d < 65) {
+      if (e.attackCd <= 0 && d < 65 && graceTimer <= 0) {
         e.attackCd = 2.4;
         const from = e.pos.clone().add(new THREE.Vector3(0, 2.0, 0));
         const tgt = target.clone().add(new THREE.Vector3(0, 0.4, 0));
@@ -1410,7 +1419,10 @@ window.addEventListener('keydown', e => {
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (started && !paused && !gameOver) update(dt);
+  if (started && !paused && !gameOver) {
+    if (graceTimer > 0) graceTimer -= dt;
+    update(dt);
+  }
   updateBanner(dt);
   renderDamageIndicators(dt);
   updateCamera();
