@@ -699,27 +699,27 @@ function fireEnemyBullet(from, target, damage, speed, radius) {
 
 // ============ Spawn waves ============
 function spawnWave(n) {
-  // Easier curve: wave 1 is only 2 shooters (warm-up), tanks delayed to wave 4
-  const shooters = 1 + n;
-  const brawlers = Math.max(0, n - 1);
-  const tanks = Math.max(0, Math.floor((n - 2) / 2));
+  // Mid-difficulty curve: wave 1 = 5 enemies (no tank), tank from wave 3
+  const shooters = 3 + n;
+  const brawlers = n;
+  const tanks = Math.max(0, Math.floor((n - 1) / 2));
   if (n === 1) {
-    // Two close-ish shooters so the player has something to engage immediately, but not surrounded
+    // Spread the first-wave shooters evenly around the player so the
+    // engagement is immediate but never a focused crossfire
     for (let i = 0; i < shooters; i++) {
-      const ang = (i / shooters) * Math.PI * 2 + Math.random() * 0.5;
-      const r = 16 + Math.random() * 8;
-      makeEnemy(0, 50 + n * 8, Math.cos(ang) * r, Math.sin(ang) * r);
+      const ang = (i / shooters) * Math.PI * 2 + Math.random() * 0.3;
+      const r = 16 + Math.random() * 10;
+      makeEnemy(0, 60 + n * 8, Math.cos(ang) * r, Math.sin(ang) * r);
     }
   } else {
-    for (let i = 0; i < shooters; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(0, 50 + n * 8, x, z); }
+    for (let i = 0; i < shooters; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(0, 60 + n * 8, x, z); }
   }
-  for (let i = 0; i < brawlers; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(1, 80 + n * 10, x, z); }
-  for (let i = 0; i < tanks; i++) { const [x, z] = randSpot(28, 2.5); makeEnemy(2, 380 + n * 55, x, z); }
+  for (let i = 0; i < brawlers; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(1, 90 + n * 10, x, z); }
+  for (let i = 0; i < tanks; i++) { const [x, z] = randSpot(28, 2.5); makeEnemy(2, 400 + n * 55, x, z); }
   showBanner(`第 ${n} 波`, 2.0);
   SFX.waveStart();
   waveInProgress = true;
-  graceTimer = 2.5; // 2.5s of safety before enemies can attack
-  // Clear any in-flight enemy bullets (paused-frozen ones, etc.)
+  graceTimer = 2.5;
   for (const b of enemyBullets) scene.remove(b.mesh);
   enemyBullets.length = 0;
 }
