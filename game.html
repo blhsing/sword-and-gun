@@ -315,7 +315,8 @@ const player = {
   yaw: 0, pitch: 0,
   hp: PLAYER_MAX_HP,
   weapon: 0,
-  ammo: [16, 40, 90, 5, 0, 5],
+  ammo: [16, 0, 0, 0, 0, 0],
+  owned: [true, false, false, false, false, false],
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
@@ -448,6 +449,43 @@ for (let i=0; i<12; i++) {
   const [x, z] = randSpot(8, 0);
   makePack(x, z);
 }
+
+// ============ Weapon pickups ============
+const weaponPickups = [];
+const weaponCrateColors = [
+  null,                                  // 0 pistol — never spawned
+  new THREE.Color(0x66ccff),             // 1 SMG
+  new THREE.Color(0x888a90),             // 2 MG
+  new THREE.Color(0xff7733),             // 3 RPG
+  new THREE.Color(0xb588d6),             // 4 Sword
+  new THREE.Color(0x2c2c34),             // 5 Sniper
+];
+const weaponCrateMats = weaponCrateColors.map(c => c ? new THREE.MeshLambertMaterial({ color: c.getHex() }) : null);
+const crateBaseMat = new THREE.MeshLambertMaterial({ color: 0x5a4a30 });
+
+function makeWeaponPickup(x, z, weaponIdx) {
+  const p = { pos: new THREE.Vector3(x, 0, z), weaponIdx, active: true, respawn: 0, group: new THREE.Group() };
+  const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 1.4), crateBaseMat);
+  base.position.y = 0.15; p.group.add(base);
+  const top = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 1.0), weaponCrateMats[weaponIdx]);
+  top.position.y = 0.65; p.group.add(top);
+  p.group.position.copy(p.pos);
+  scene.add(p.group);
+  weaponPickups.push(p);
+}
+
+function spawnWeaponPickups() {
+  // Clean previous
+  for (const wp of weaponPickups) scene.remove(wp.group);
+  weaponPickups.length = 0;
+  // 10 crates, weapons 1..5 cycled
+  for (let i = 0; i < 10; i++) {
+    const [x, z] = randSpot(10, 1.0);
+    const wi = 1 + (i % 5);
+    makeWeaponPickup(x, z, wi);
+  }
+}
+spawnWeaponPickups();
 
 // ============ Projectiles & effects ============
 const enemyBullets = []; // {mesh,pos,dir,speed,life,damage,radius}
@@ -859,7 +897,8 @@ function restart() {
   player.yaw = 0; player.pitch = 0;
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
-  player.ammo = [16, 40, 90, 5, 0, 5];
+  player.ammo = [16, 0, 0, 0, 0, 0];
+  player.owned = [true, false, false, false, false, false];
   player.reload = 0; player.cooldown = 0; player.swordAnim = 0;
 
   tank.pos.set(0, 0, 9); tank.yaw = 0; tank.hp = tank.maxHp; tank.fireCd = 0;
@@ -872,6 +911,7 @@ function restart() {
 
   score = 0; wave = 1; gameOver = false; won = false;
   waveDelay = 0; waveInProgress = false;
+  spawnWeaponPickups();
   spawnWave(1);
 
   titleEl.textContent = '刀劍與槍';
@@ -965,8 +1005,13 @@ function update(dt) {
     // Block walking through the friendly tank
     pushOutOfTank(player.pos, PLAYER_R);
 
-    for (let i = 0; i < WEAPONS.length; i++) if (keys['Digit' + (i+1)]) player.weapon = i;
-    if (keys['KeyQ'] && !keys._qLast) player.weapon = (player.weapon + 1) % WEAPONS.length;
+    for (let i = 0; i < WEAPONS.length; i++) if (keys['Digit' + (i+1)] && player.owned[i]) player.weapon = i;
+    if (keys['KeyQ'] && !keys._qLast) {
+      for (let step = 1; step <= WEAPONS.length; step++) {
+        const nw = (player.weapon + step) % WEAPONS.length;
+        if (player.owned[nw]) { player.weapon = nw; break; }
+      }
+    }
     keys._qLast = !!keys['KeyQ'];
 
     const w = WEAPONS[player.weapon];
@@ -1154,6 +1199,33 @@ function update(dt) {
       player.hp = Math.min(PLAYER_MAX_HP, player.hp + 55);
       SFX.pickup();
       p.active = false; p.respawn = 18; p.group.visible = false;
+    }
+  }
+
+  // Weapon pickups
+  for (const wp of weaponPickups) {
+    if (!wp.active) {
+      wp.respawn -= dt;
+      if (wp.respawn <= 0) {
+        // Re-roll weapon type and re-skin top mesh
+        wp.weaponIdx = 1 + Math.floor(Math.random() * 5);
+        if (wp.group.children[1]) wp.group.children[1].material = weaponCrateMats[wp.weaponIdx];
+        wp.active = true;
+        wp.group.visible = true;
+      }
+      continue;
+    }
+    wp.group.rotation.y += dt * 1.2;
+    wp.group.position.y = Math.sin(performance.now() * 0.002 + wp.pos.x) * 0.1;
+    if (player.pos.distanceTo(wp.pos) < 2.0) {
+      const wi = wp.weaponIdx;
+      const wasOwned = player.owned[wi];
+      player.owned[wi] = true;
+      player.ammo[wi] = WEAPONS[wi].mag; // full mag on pickup (+ one if already owned counts as ammo refill)
+      // If first time getting it, auto-switch to the new weapon
+      if (!wasOwned) player.weapon = wi;
+      SFX.pickup();
+      wp.active = false; wp.respawn = 22; wp.group.visible = false;
     }
   }
 
@@ -1382,7 +1454,8 @@ function updateHud() {
     weaponinfo.textContent = '坦克炮 (按 F 下車)';
   } else {
     const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? ' 換彈中…' : ` ${player.ammo[player.weapon]}/${w.mag}`);
-    weaponinfo.textContent = `${player.weapon + 1}. ${w.name}${ammoTxt}`;
+    const ownedCount = player.owned.filter(b => b).length;
+    weaponinfo.textContent = `${player.weapon + 1}. ${w.name}${ammoTxt}   武器 ${ownedCount}/${WEAPONS.length}`;
   }
 
   if (started && !inTank && tank.alive && player.pos.distanceTo(tank.pos) < 5 && !gameOver) {
