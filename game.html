@@ -1,4 +1,12 @@
 <!DOCTYPE html>
+<!--
+  Sword & Gun (刀劍與槍) — web edition.
+
+  A single-file 3D first-person arena shooter on Three.js (loaded from a CDN); no build
+  step. Single-player waves, a drivable friendly tank, an AI ally, health/weapon pickups,
+  climbable buildings, and a WebRTC-paired LAN 1v1 duel. The native desktop port lives in
+  Program.cs (.NET 9 + raylib) and is kept at feature parity. See README.md for details.
+-->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8" />
@@ -20,6 +28,11 @@
   #tanktext { position:absolute; left:14px; top:6px; font-weight:bold; font-size:15px; color:#000; }
   #waveinfo { position:absolute; left:20px; top:20px; font-size:22px; line-height:1.45; text-shadow:1px 1px 2px #000; }
   #weaponinfo { position:absolute; right:24px; bottom:30px; font-size:22px; font-weight:bold; text-align:right; text-shadow:1px 1px 3px #000; }
+  #weaponbar { position:absolute; left:50%; bottom:26px; transform:translateX(-50%); display:flex; gap:10px; font-size:17px; font-weight:bold; text-shadow:1px 1px 2px #000; pointer-events:none; }
+  #weaponbar .slot { padding:3px 8px; border-radius:5px; color:#bbb; white-space:nowrap; }
+  #weaponbar .slot.owned { color:#fff; }
+  #weaponbar .slot.empty { color:#e85a5a; }
+  #weaponbar .slot.cur { color:#ff0; background:rgba(190,160,0,.28); }
   #footer { position:absolute; left:20px; bottom:104px; font-size:12px; opacity:.6; letter-spacing:.3px; }
   #hint { position:absolute; left:50%; top:60%; transform:translateX(-50%); font-size:22px; background:rgba(0,0,0,.65); padding:10px 18px; border-radius:8px; display:none; color:#ff0; font-weight:bold; }
   #scope { position:absolute; inset:0; pointer-events:none; opacity:0; transition:opacity .12s; background:radial-gradient(circle at center, transparent 28%, rgba(0,0,0,.85) 32%, #000 50%); }
@@ -48,6 +61,8 @@
   #netPanel button:hover { background:rgba(255,255,255,.18); }
   #netPanel textarea { width:100%; height:58px; box-sizing:border-box; margin:5px 0; padding:8px; border:1px solid rgba(255,255,255,.25); border-radius:6px; background:rgba(0,0,0,.36); color:#fff; resize:vertical; font-size:12px; }
   #netStatus { color:#9cf; min-height:20px; }
+  #langBtn { position:absolute; top:14px; right:16px; padding:6px 14px; font-size:14px; border-radius:6px; border:1px solid #557; background:#1b2435; color:#cde; cursor:pointer; }
+  #langBtn:hover { background:#26324a; }
   .hide { display:none !important; }
   #viewmodel { position:absolute; right:0; bottom:0; width:50%; height:55%; pointer-events:none; overflow:hidden; }
   #viewmodel svg { position:absolute; right:-20px; bottom:-30px; width:100%; height:100%; }
@@ -62,6 +77,7 @@
   <div id="tankbar"><div id="tankfill"></div><div id="tanktext">坦克 600/600</div></div>
   <div id="waveinfo"></div>
   <div id="weaponinfo"></div>
+  <div id="weaponbar"></div>
   <div id="footer">WASD 移動 · Shift 衝刺 · 空白鍵 跳躍 · 滑鼠瞄準 · 左鍵攻擊 · 右鍵瞄準鏡 · 1-6 切武器 · Q 下一把 · R 換彈 · F 上下坦克 · P/ESC 暫停</div>
   <div id="hint"></div>
   <div id="banner"></div>
@@ -69,6 +85,7 @@
   <div id="dmgInd"></div>
 </div>
 <div id="overlay">
+  <button id="langBtn" type="button">English</button>
   <h1 id="title">刀劍與槍</h1>
   <div class="sub" id="subtitle">輸入名字後點擊開始</div>
   <input id="playerName" maxlength="18" autocomplete="off" placeholder="玩家名字" />
@@ -84,7 +101,7 @@
     <textarea id="localCode" readonly placeholder="本機配對碼會出現在這裡"></textarea>
     <textarea id="remoteCode" placeholder="貼上對方配對碼"></textarea>
   </div>
-  <div class="controls">
+  <div class="controls" id="controls">
     <b>1</b> 手槍 &nbsp; <b>2</b> 衝鋒槍 &nbsp; <b>3</b> 機關槍 &nbsp; <b>4</b> 火箭筒 &nbsp; <b>5</b> 刀劍 &nbsp; <b>6</b> 狙擊槍<br>
     <b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>空白</b> 跳躍 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br>
     <b>F</b> 上/下友軍坦克 &nbsp; <b>P</b> 或 <b>ESC</b> 暫停
@@ -186,10 +203,48 @@ function onResize() {
 window.addEventListener('resize', onResize);
 onResize();
 
-scene.add(new THREE.HemisphereLight(0xddeeff, 0x335533, 0.85));
-const sun = new THREE.DirectionalLight(0xffffff, 0.8);
-sun.position.set(60, 100, 40);
+// Keep a modest sky/ground fill so shadowed faces aren't black, but let the
+// directional "sun" dominate so each side of an object reads as a distinct shade.
+scene.add(new THREE.HemisphereLight(0xddeeff, 0x556644, 0.42));
+const sun = new THREE.DirectionalLight(0xffffff, 1.15);
+sun.position.set(55, 95, 35);
 scene.add(sun);
+scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+
+// ============ First-person 3D weapon view-model (replaces the old 2D SVG) ============
+scene.add(camera);                         // so camera children render
+const viewWeapon = new THREE.Group();
+camera.add(viewWeapon);
+let viewWeaponIdx = -2;
+const vmMetal = new THREE.MeshLambertMaterial({ color: 0x2c3038 });
+const vmBlade = new THREE.MeshLambertMaterial({ color: 0xd2dae4 });
+const vmHilt  = new THREE.MeshLambertMaterial({ color: 0x78553a });
+function buildViewWeapon(idx) {
+  while (viewWeapon.children.length) { const c = viewWeapon.children[0]; viewWeapon.remove(c); if (c.geometry) c.geometry.dispose(); }
+  const w = WEAPONS[idx];
+  if (w.melee) {
+    const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.18), vmHilt); hilt.position.z = -0.09; viewWeapon.add(hilt);
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, 0.55), vmBlade); blade.position.z = -0.42; viewWeapon.add(blade);
+  } else {
+    const len = w.sniper ? 0.62 : (w.explosive ? 0.56 : 0.42);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.09, len), vmMetal); body.position.z = -len * 0.5; viewWeapon.add(body);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.14, 0.07), vmMetal); grip.position.set(0, -0.1, -0.02); viewWeapon.add(grip);
+    if (w.sniper) { const sc = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.18), vmMetal); sc.position.set(0, 0.08, -0.2); viewWeapon.add(sc); }
+  }
+  viewWeaponIdx = idx;
+}
+function updateViewWeapon() {
+  const show = started && !paused && !gameOver && !inTank && currentFov > BASE_FOV - 2;
+  viewWeapon.visible = show;
+  if (!show) return;
+  if (viewWeaponIdx !== player.weapon) buildViewWeapon(player.weapon);
+  const w = WEAPONS[player.weapon];
+  const recoil = (w.cd > 0 && player.cooldown > 0) ? Math.min(1, player.cooldown / w.cd) : 0;
+  viewWeapon.position.set(0.2, -0.18, -0.5 + recoil * 0.12);
+  viewWeapon.rotation.x = (w.melee && player.swordAnim > 0)
+    ? -Math.sin(Math.min(1, (0.3 - player.swordAnim) / 0.3) * Math.PI) * 1.2
+    : 0;
+}
 
 // ============ Constants ============
 const ARENA = 78;
@@ -200,13 +255,17 @@ const GRAVITY = 24;
 const JUMP_VEL = 11;
 
 const WEAPONS = [
-  { name:'手槍',   mag:16, dmg:24,  cd:0.22,  reload:1.0,  range:75,  explosive:false, spread:0.012, full:false, melee:false, sniper:false, sfx:'pistol' },
-  { name:'衝鋒槍', mag:40, dmg:13,  cd:0.055, reload:1.45, range:58,  explosive:false, spread:0.035, full:true,  melee:false, sniper:false, sfx:'smg'    },
-  { name:'機關槍', mag:90, dmg:18,  cd:0.085, reload:2.2,  range:85,  explosive:false, spread:0.028, full:true,  melee:false, sniper:false, sfx:'mg'     },
-  { name:'火箭筒', mag:5,  dmg:115, cd:0.9,   reload:2.5,  range:100, explosive:true,  spread:0,     full:false, melee:false, sniper:false, sfx:'rpg'    },
-  { name:'刀劍',   mag:0,  dmg:280, cd:0.35,  reload:0,    range:4.0, explosive:false, spread:0,     full:false, melee:true,  sniper:false, sfx:'sword'  },
-  { name:'狙擊槍', mag:5,  dmg:180, cd:1.0,   reload:2.2,  range:220, explosive:false, spread:0,     full:false, melee:false, sniper:true,  sfx:'sniper' },
+  { name:'手槍',   en:'Pistol', mag:16, dmg:24,  cd:0.22,  reload:1.0,  range:75,  explosive:false, spread:0.012, full:false, melee:false, sniper:false, sfx:'pistol' },
+  { name:'衝鋒槍', en:'SMG',    mag:40, dmg:13,  cd:0.055, reload:1.45, range:58,  explosive:false, spread:0.035, full:true,  melee:false, sniper:false, sfx:'smg'    },
+  { name:'機關槍', en:'MG',     mag:90, dmg:18,  cd:0.085, reload:2.2,  range:85,  explosive:false, spread:0.028, full:true,  melee:false, sniper:false, sfx:'mg'     },
+  { name:'火箭筒', en:'RPG',    mag:5,  dmg:115, cd:0.9,   reload:2.5,  range:100, explosive:true,  spread:0,     full:false, melee:false, sniper:false, sfx:'rpg'    },
+  { name:'刀劍',   en:'Sword',  mag:0,  dmg:280, cd:0.35,  reload:0,    range:4.0, explosive:false, spread:0,     full:false, melee:true,  sniper:false, sfx:'sword'  },
+  { name:'狙擊槍', en:'Sniper', mag:5,  dmg:180, cd:1.0,   reload:2.2,  range:220, explosive:false, spread:0,     full:false, melee:false, sniper:true,  sfx:'sniper' },
 ];
+let lang = 'zh';
+try { lang = localStorage.getItem('swordAndGun.lang') || 'zh'; } catch {}
+function T(zh, en) { return lang === 'en' ? en : zh; }
+function wname(i) { return lang === 'en' ? WEAPONS[i].en : WEAPONS[i].name; }
 
 // ============ Materials & geometry ============
 const mats = {
@@ -380,7 +439,7 @@ const player = {
   hp: PLAYER_MAX_HP,
   weapon: 0,
   ammo: WEAPONS.map(w => w.mag),
-  owned: WEAPONS.map(() => true),
+  owned: WEAPONS.map((_, i) => i === 0),   // start with the pistol only; find the rest in crates
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
@@ -397,12 +456,12 @@ const remotePlayer = {
   group: new THREE.Group(),
 };
 function buildRemotePlayer() {
-  const body = new THREE.Mesh(geo.enemyBody, new THREE.MeshLambertMaterial({ color: 0x2c5cc8 }));
-  body.position.y = 1; remotePlayer.group.add(body);
-  const head = new THREE.Mesh(geo.enemyHead, new THREE.MeshLambertMaterial({ color: 0x91b6ff }));
-  head.position.y = 2.3; remotePlayer.group.add(head);
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.18, 0.18), new THREE.MeshLambertMaterial({ color: 0x111827 }));
-  gun.position.set(0.55, 1.25, 0.25); remotePlayer.group.add(gun);
+  const bm = new THREE.MeshLambertMaterial({ color: 0x2c5cc8 });
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.5), bm); legs.position.y = 0.45; remotePlayer.group.add(legs);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.85, 0.55), bm); torso.position.y = 1.35; remotePlayer.group.add(torso);
+  const head = new THREE.Mesh(geo.enemyHead, new THREE.MeshLambertMaterial({ color: 0x91b6ff })); head.position.y = 2.05; remotePlayer.group.add(head);
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.72), mats.barrel);
+  gun.position.set(0.34, 1.3, 0.45); remotePlayer.group.add(gun);
   remotePlayer.group.visible = false;
   scene.add(remotePlayer.group);
 }
@@ -470,13 +529,18 @@ function makeEnemy(type, hp, x, z) {
     }
   } else {
     const baseMat = (type === 0 ? mats.shooter : mats.brawler).clone();
-    const body = new THREE.Mesh(geo.enemyBody, baseMat);
-    body.position.y = 1; e.group.add(body); e._bodyMeshes.push(body);
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.5), baseMat);
+    legs.position.y = 0.45; e.group.add(legs); e._bodyMeshes.push(legs);
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.85, 0.55), baseMat);
+    torso.position.y = 1.35; e.group.add(torso); e._bodyMeshes.push(torso);
     const head = new THREE.Mesh(geo.enemyHead, baseMat);
-    head.position.y = 2.3; e.group.add(head); e._bodyMeshes.push(head);
+    head.position.y = 2.05; e.group.add(head); e._bodyMeshes.push(head);
     if (type === 1) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1.2), mats.blade);
-      blade.position.set(0.7, 1.1, 0); e.group.add(blade);
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.34, 1.1), mats.blade);
+      blade.position.set(0.34, 1.3, 0.55); e.group.add(blade);   // sword, points forward
+    } else {
+      const gun = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.72), mats.barrel);
+      gun.position.set(0.34, 1.3, 0.45); e.group.add(gun);       // rifle, points forward
     }
   }
   // HP bar above
@@ -506,12 +570,11 @@ const ally = {
 };
 {
   const bodyMat = mats.ally.clone();
-  const body = new THREE.Mesh(geo.enemyBody, bodyMat);
-  body.position.y = 1; ally.group.add(body);
-  const head = new THREE.Mesh(geo.enemyHead, mats.allyHead.clone());
-  head.position.y = 2.3; ally.group.add(head);
-  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.18, 0.18), new THREE.MeshLambertMaterial({ color: 0x1a2c66 }));
-  gun.position.set(0.55, 1.25, 0.25); ally.group.add(gun);
+  const legs = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.5), bodyMat); legs.position.y = 0.45; ally.group.add(legs);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.85, 0.55), bodyMat); torso.position.y = 1.35; ally.group.add(torso);
+  const head = new THREE.Mesh(geo.enemyHead, mats.allyHead.clone()); head.position.y = 2.05; ally.group.add(head);
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.18, 0.72), mats.barrel);
+  gun.position.set(0.34, 1.3, 0.45); ally.group.add(gun);
   // HP bar
   const barBack = new THREE.Mesh(geo.hpBarBack, new THREE.MeshBasicMaterial({ color: 0x111111 }));
   barBack.position.y = 2.7; ally.group.add(barBack);
@@ -896,7 +959,7 @@ function firePlayerWeapon(eye, forward, right) {
   }
   if (player.ammo[player.weapon] <= 0) {
     SFX.empty();
-    player.reload = w.reload; return;
+    return;   // no auto-reload — press R to reload (matches the C# build)
   }
   player.ammo[player.weapon]--;
   SFX[w.sfx]();
@@ -949,7 +1012,7 @@ function spawnWave(n) {
   }
   for (let i = 0; i < brawlers; i++) { const [x, z] = randSpot(24, 1.0); makeEnemy(1, 90 + n * 10, x, z); }
   for (let i = 0; i < tanks; i++) { const [x, z] = randSpot(28, 2.5); makeEnemy(2, 400 + n * 55, x, z); }
-  showBanner(`第 ${n} 波`, 2.0);
+  showBanner(T(`第 ${n} 波`, `Wave ${n}`), 2.0);
   SFX.waveStart();
   waveInProgress = true;
   graceTimer = 2.5;
@@ -1012,6 +1075,7 @@ const tankfill = document.getElementById('tankfill');
 const tanktext = document.getElementById('tanktext');
 const waveinfo = document.getElementById('waveinfo');
 const weaponinfo = document.getElementById('weaponinfo');
+const weaponbar = document.getElementById('weaponbar');
 const hint = document.getElementById('hint');
 const viewmodelEl = document.getElementById('viewmodel');
 const playerNameInput = document.getElementById('playerName');
@@ -1024,6 +1088,34 @@ const connectBtn = document.getElementById('connectBtn');
 const soloBtn = document.getElementById('soloBtn');
 const localCodeEl = document.getElementById('localCode');
 const remoteCodeEl = document.getElementById('remoteCode');
+
+// ============ Bilingual UI (繁中 / English, toggle with the button or F10) ============
+const langBtn = document.getElementById('langBtn');
+const footerEl = document.getElementById('footer');
+const controlsEl = document.getElementById('controls');
+function applyLang() {
+  try { localStorage.setItem('swordAndGun.lang', lang); } catch {}
+  langBtn.textContent = lang === 'en' ? '中文' : 'English';
+  footerEl.innerHTML = T(
+    'WASD 移動 · Shift 衝刺 · 空白鍵 跳躍 · 滑鼠瞄準 · 左鍵攻擊 · 右鍵瞄準鏡 · 1-6 切武器 · Q 下一把 · R 換彈 · F 上下坦克 · P/ESC 暫停',
+    'WASD move · Shift sprint · Space jump · Mouse aim · LMB fire · RMB scope · 1-6 weapon · Q next · R reload · F tank · P/ESC pause');
+  controlsEl.innerHTML = T(
+    '<b>1</b> 手槍 &nbsp; <b>2</b> 衝鋒槍 &nbsp; <b>3</b> 機關槍 &nbsp; <b>4</b> 火箭筒 &nbsp; <b>5</b> 刀劍 &nbsp; <b>6</b> 狙擊槍<br><b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>空白</b> 跳躍 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br><b>F</b> 上/下友軍坦克 &nbsp; <b>P</b> 或 <b>ESC</b> 暫停',
+    '<b>1</b> Pistol &nbsp; <b>2</b> SMG &nbsp; <b>3</b> MG &nbsp; <b>4</b> RPG &nbsp; <b>5</b> Sword &nbsp; <b>6</b> Sniper<br><b>WASD</b> move &nbsp; <b>Shift</b> sprint &nbsp; <b>Space</b> jump &nbsp; <b>Mouse</b> aim &nbsp; <b>LMB</b> fire &nbsp; <b>RMB</b> scope &nbsp; <b>Q</b> next &nbsp; <b>R</b> reload<br><b>F</b> enter/exit tank &nbsp; <b>P</b> or <b>ESC</b> pause');
+  hostBtn.textContent = T('建立區網房間', 'Host LAN');
+  joinBtn.textContent = T('加入房間', 'Join');
+  connectBtn.textContent = T('套用對方回覆碼', 'Apply reply code');
+  soloBtn.textContent = T('單人模式', 'Single-player');
+  playerNameInput.placeholder = T('玩家名字', 'Player name');
+  remoteCodeEl.placeholder = T('貼上對方配對碼', 'Paste the other code');
+}
+function toggleLang() {
+  lang = lang === 'en' ? 'zh' : 'en';
+  applyLang();
+  if (!started && !overlay.classList.contains('hide')) showStartOverlay();
+}
+langBtn.addEventListener('click', toggleLang);
+window.addEventListener('keydown', e => { if (e.code === 'F10') { e.preventDefault(); toggleLang(); } });
 
 const RANKING_KEY = 'swordAndGun.rankings.v1';
 playerNameInput.value = localStorage.getItem('swordAndGun.lastName') || '';
@@ -1051,11 +1143,11 @@ function saveRanking(name, finalScore, finalWave, victory) {
 function renderRankings() {
   const rows = loadRankings();
   if (rows.length === 0) {
-    rankingEl.innerHTML = '<div class="empty">尚無排名</div>';
+    rankingEl.innerHTML = `<div class="empty">${T('尚無排名', 'No scores yet')}</div>`;
     return;
   }
   rankingEl.innerHTML = rows.map((r, i) =>
-    `<div class="row"><span>#${i + 1}</span><span>${escapeHtml(r.name)}</span><span>${r.score}</span><span>${r.victory ? '勝利' : `第${r.wave}波`}</span></div>`
+    `<div class="row"><span>#${i + 1}</span><span>${escapeHtml(r.name)}</span><span>${r.score}</span><span>${r.victory ? T('勝利', 'Victory') : T(`第${r.wave}波`, `Wave ${r.wave}`)}</span></div>`
   ).join('');
 }
 
@@ -1261,8 +1353,9 @@ function updateDuel(dt) {
     netRespawn -= dt;
     if (netRespawn <= 0) {
       player.hp = PLAYER_MAX_HP;
-      player.pos.set(netRole === 'host' ? -18 : 18, 1.7, 0);
-      player.yaw = netRole === 'host' ? Math.PI / 2 : -Math.PI / 2;
+      const [sx, sz] = randSpot(0, PLAYER_R + 1);   // respawn somewhere random
+      player.pos.set(sx, 1.7, sz);
+      player.yaw = Math.atan2(-sx, -sz);
       player.pitch = 0;
       player.velY = 0;
       player.onGround = true;
@@ -1332,9 +1425,9 @@ function renderDamageIndicators(dt) {
 }
 
 function showStartOverlay() {
-  titleEl.textContent = '刀劍與槍';
+  titleEl.textContent = T('刀劍與槍', 'Sword & Gun');
   titleEl.style.color = '#fff';
-  subtitleEl.textContent = '輸入名字後點擊開始';
+  subtitleEl.textContent = T('輸入名字後點擊開始', 'Enter a name, then click to start');
   playerNameInput.classList.remove('hide');
   netPanel.classList.remove('hide');
   renderRankings();
@@ -1363,11 +1456,11 @@ function finishRun() {
     return;
   }
   if (document.pointerLockElement === canvas) document.exitPointerLock();
-  titleEl.textContent = won ? '勝利！' : '你死了';
+  titleEl.textContent = won ? T('勝利！', 'Victory!') : T('你死了', 'You died');
   titleEl.style.color = won ? '#5f5' : '#f55';
   subtitleEl.textContent = lanDuel
-    ? `${playerName} ${score} : ${remoteScore} ${remoteName}　點擊重新開始`
-    : `${playerName}　分數 ${score}　點擊重新開始`;
+    ? `${playerName} ${score} : ${remoteScore} ${remoteName}　${T('點擊重新開始', 'click to restart')}`
+    : `${playerName}　${T('分數', 'Score')} ${score}　${T('點擊重新開始', 'click to restart')}`;
   playerNameInput.classList.add('hide');
   netPanel.classList.remove('hide');
   renderRankings();
@@ -1389,6 +1482,7 @@ playerNameInput.addEventListener('keydown', e => {
   if (!started && !gameOver) startRun();
 });
 
+applyLang();
 showStartOverlay();
 
 document.addEventListener('pointerlockchange', () => {
@@ -1411,9 +1505,9 @@ document.addEventListener('pointerlockchange', () => {
   } else {
     if (!gameOver && started) {
       paused = true;
-      titleEl.textContent = '暫停';
+      titleEl.textContent = T('暫停', 'Paused');
       titleEl.style.color = '#fff';
-      subtitleEl.textContent = '點擊或按 P 繼續';
+      subtitleEl.textContent = T('點擊或按 P 繼續', 'Click or press P to resume');
       overlay.classList.remove('hide');
     }
   }
@@ -1443,7 +1537,7 @@ function restart() {
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
   player.ammo = WEAPONS.map(w => w.mag);
-  player.owned = WEAPONS.map(() => true);
+  player.owned = WEAPONS.map((_, i) => i === 0);   // pistol only; pick up the rest
   player.reload = 0; player.cooldown = 0; player.swordAnim = 0;
   netRespawn = 0;
   remoteRespawn = 0;
@@ -1638,8 +1732,8 @@ function update(dt) {
     const dn = d > 0.01 ? to.divideScalar(d) : new THREE.Vector3();
 
     if (e.type === 0) {
-      if (d > 18) moveEnemy(e, dn.clone().multiplyScalar(2.7 * dt));
-      else if (d < 11) moveEnemy(e, dn.clone().multiplyScalar(-2.2 * dt));
+      if (d > 18) moveEnemy(e, steerAround(e.pos, dn, e.radius).multiplyScalar(2.7 * dt));
+      else if (d < 11) moveEnemy(e, steerAround(e.pos, dn.clone().negate(), e.radius).multiplyScalar(2.2 * dt));
       else {
         if (e.strafeTimer <= 0) { e.strafeTimer = 1.3 + rng(); e.strafeDir = !e.strafeDir; }
         const s = new THREE.Vector3(-dn.z, 0, dn.x);
@@ -1652,14 +1746,14 @@ function update(dt) {
         fireEnemyBullet(from, tgt, 12, 26, 0.1);
       }
     } else if (e.type === 1) {
-      if (d > 1.9) moveEnemy(e, dn.clone().multiplyScalar(5.2 * dt));
+      if (d > 1.9) moveEnemy(e, steerAround(e.pos, dn, e.radius).multiplyScalar(5.2 * dt));
       if (d < 2.3 && e.attackCd <= 0 && graceTimer <= 0) {
         e.attackCd = 0.85;
         damageFriendlyAt(target, 18, e.pos);
       }
     } else {
-      if (d > 28) moveEnemy(e, dn.clone().multiplyScalar(1.4 * dt));
-      else if (d < 16) moveEnemy(e, dn.clone().multiplyScalar(-0.8 * dt));
+      if (d > 28) moveEnemy(e, steerAround(e.pos, dn, e.radius).multiplyScalar(1.4 * dt));
+      else if (d < 16) moveEnemy(e, steerAround(e.pos, dn.clone().negate(), e.radius).multiplyScalar(0.8 * dt));
       if (e.attackCd <= 0 && d < 65 && graceTimer <= 0) {
         e.attackCd = 2.4;
         const from = e.pos.clone().add(new THREE.Vector3(0, 2.0, 0));
@@ -1790,10 +1884,14 @@ function update(dt) {
     }
     p.group.rotation.y += dt * 1.5;
     p.group.position.y = Math.sin(performance.now() * 0.003) * 0.12;
-    if (player.pos.distanceTo(p.pos) < 2.0 && player.hp < PLAYER_MAX_HP) {
-      player.hp = Math.min(PLAYER_MAX_HP, player.hp + 55);
-      SFX.pickup();
-      p.active = false; p.respawn = 18; p.group.visible = false;
+    if (player.pos.distanceTo(p.pos) < 2.0) {
+      if (inTank && tank.alive && tank.hp < tank.maxHp) {        // heal the tank you're driving
+        tank.hp = Math.min(tank.maxHp, tank.hp + 120);
+        SFX.pickup(); p.active = false; p.respawn = 18; p.group.visible = false;
+      } else if (!inTank && player.hp < PLAYER_MAX_HP) {          // heal on foot
+        player.hp = Math.min(PLAYER_MAX_HP, player.hp + 55);
+        SFX.pickup(); p.active = false; p.respawn = 18; p.group.visible = false;
+      }
     }
   }
 
@@ -1859,7 +1957,7 @@ function update(dt) {
   if (!lanDuel && enemies.length === 0 && waveInProgress) {
     waveInProgress = false;
     if (wave >= 8) { won = true; gameOver = true; SFX.victory(); }
-    else { waveDelay = 2.5; showBanner(`第 ${wave} 波完成！`, 2.0); SFX.waveClear(); }
+    else { waveDelay = 3.0; showBanner(T(`第 ${wave} 波完成！`, `Wave ${wave} clear!`), 2.0); SFX.waveClear(); }   // 3s breather between waves
   }
   if (!lanDuel && waveDelay > 0) {
     waveDelay -= dt;
@@ -1881,6 +1979,29 @@ function moveEnemy(e, delta) {
   moveCircle2D(tmp, delta.x, 0, e.radius);
   moveCircle2D(tmp, 0, delta.z, e.radius);
   e.pos.x = tmp.x; e.pos.z = tmp.z;
+}
+
+function blockedAhead(pos, dx, dz, radius) {
+  const px = pos.x + dx * (radius + 1.6), pz = pos.z + dz * (radius + 1.6);
+  for (const b of obstacles) {
+    if (b.maxY <= STEP_HEIGHT) continue;   // low cover can be stepped over
+    if (px > b.minX - radius && px < b.maxX + radius && pz > b.minZ - radius && pz < b.maxZ + radius) return true;
+  }
+  return false;
+}
+
+// Pick the heading closest to `desired` whose short look-ahead is clear, so enemies
+// path around obstacles instead of grinding into them.
+function steerAround(pos, desired, radius) {
+  const len = Math.hypot(desired.x, desired.z);
+  if (len < 1e-4) return desired;
+  const dx = desired.x / len, dz = desired.z / len;
+  for (const deg of [0, 22, -22, 45, -45, 70, -70, 100, -100, 135, -135]) {
+    const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+    const rx = dx * c + dz * s, rz = -dx * s + dz * c;
+    if (!blockedAhead(pos, rx, rz, radius)) return new THREE.Vector3(rx, 0, rz);
+  }
+  return desired;
 }
 
 function chooseEnemyTarget(from) {
@@ -1951,7 +2072,9 @@ const scopeEl = document.getElementById('scope');
 let currentFov = BASE_FOV;
 function updateCamera() {
   if (inTank && tank.alive) {
-    camera.position.copy(tank.pos).add(new THREE.Vector3(0, 2.7, 0));
+    // Third-person: raised and pulled back behind the turret so the barrel doesn't block the view.
+    const flat = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+    camera.position.copy(tank.pos).add(new THREE.Vector3(0, 3.4, 0)).addScaledVector(flat, -2.6);
   } else {
     camera.position.copy(player.pos).add(new THREE.Vector3(0, 0.2, 0));
   }
@@ -2055,35 +2178,40 @@ function updateHud() {
     tankbar.style.display = 'none';
   }
   if (lanDuel) {
-    const peerState = netConnected ? (remotePlayer.alive ? `對手HP ${Math.round(remotePlayer.hp)}` : `對手重生 ${remoteRespawn.toFixed(1)}s`) : '等待連線';
-    const selfState = netRespawn > 0 ? `<br>重生 ${netRespawn.toFixed(1)}s` : '';
-    waveinfo.innerHTML = `區網對戰<br>${playerName} ${score} : ${remoteScore} ${remoteName}<br>${peerState}${selfState}`;
+    const peerState = netConnected ? (remotePlayer.alive ? T(`對手HP ${Math.round(remotePlayer.hp)}`, `Foe HP ${Math.round(remotePlayer.hp)}`) : T(`對手重生 ${remoteRespawn.toFixed(1)}s`, `Foe respawn ${remoteRespawn.toFixed(1)}s`)) : T('等待連線', 'Waiting…');
+    const selfState = netRespawn > 0 ? T(`<br>重生 ${netRespawn.toFixed(1)}s`, `<br>Respawn ${netRespawn.toFixed(1)}s`) : '';
+    waveinfo.innerHTML = `${T('區網對戰', 'LAN duel')}<br>${playerName} ${score} : ${remoteScore} ${remoteName}<br>${peerState}${selfState}`;
   } else {
-    waveinfo.innerHTML = `第 ${wave}/8 波<br>分數 ${score}<br>敵人 ${enemies.length}`;
+    const next = (waveDelay > 0 && enemies.length === 0) ? T(`<br>下一波 ${Math.ceil(waveDelay)}`, `<br>Next wave ${Math.ceil(waveDelay)}`) : '';
+    waveinfo.innerHTML = `${T(`第 ${wave}/8 波`, `Wave ${wave}/8`)}<br>${T('分數', 'Score')} ${score}<br>${T('敵人', 'Enemies')} ${enemies.length}${next}`;
   }
   if (inTank) {
-    weaponinfo.textContent = '坦克炮 (按 F 下車)';
+    weaponinfo.textContent = T('坦克炮 (按 F 下車)', 'Tank cannon (F to exit)');
   } else {
-    const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? ' 換彈中…' : ` ${player.ammo[player.weapon]}/${w.mag}`);
+    const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? T(' 換彈中…', ' reloading…') : ` ${player.ammo[player.weapon]}/${w.mag}`);
     const ownedCount = player.owned.filter(b => b).length;
     weaponinfo.textContent = lanDuel
-      ? `${player.weapon + 1}. ${w.name}${ammoTxt}   先到 ${DUEL_KILLS_TO_WIN} 擊殺`
-      : `${player.weapon + 1}. ${w.name}${ammoTxt}   武器 ${ownedCount}/${WEAPONS.length}`;
+      ? `${player.weapon + 1}. ${wname(player.weapon)}${ammoTxt}   ${T(`先到 ${DUEL_KILLS_TO_WIN} 擊殺`, `First to ${DUEL_KILLS_TO_WIN}`)}`
+      : `${player.weapon + 1}. ${wname(player.weapon)}${ammoTxt}   ${T(`武器 ${ownedCount}/${WEAPONS.length}`, `Weapons ${ownedCount}/${WEAPONS.length}`)}`;
   }
+  // Weapon availability bar: owned weapons bright, not-yet-found dimmed, current highlighted.
+  weaponbar.innerHTML = WEAPONS.map((wp, i) => {
+    const owned = player.owned[i];
+    const ammoTxt = (owned && wp.mag > 0) ? ' ' + player.ammo[i] : '';
+    const empty = owned && wp.mag > 0 && player.ammo[i] <= 0;
+    const cls = 'slot' + (owned ? ' owned' : '') + (empty ? ' empty' : '') + ((!inTank && player.weapon === i) ? ' cur' : '');
+    return `<span class="${cls}">${i + 1} ${wname(i)}${ammoTxt}</span>`;
+  }).join('');
 
   if (started && !inTank && tank.alive && player.pos.distanceTo(tank.pos) < 5 && !gameOver) {
     hint.style.display = 'block';
-    hint.textContent = '按 F 上坦克';
+    hint.textContent = T('按 F 上坦克', 'Press F to enter tank');
   } else {
     hint.style.display = 'none';
   }
 
-  // Weapon view model (only refresh on change for perf)
-  const key = inTank ? 'tank' : w.name + (started ? '' : 'X') + (w.melee ? `:${player.swordAnim.toFixed(2)}` : '');
-  if (lastWeapon !== key) {
-    viewmodelEl.innerHTML = svgViewModel(w.name);
-    lastWeapon = key;
-  }
+  // First-person 3D weapon view-model
+  updateViewWeapon();
 
   if (gameOver) {
     finishRun();
