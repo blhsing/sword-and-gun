@@ -37,6 +37,17 @@
   #overlay .sub { font-size:24px; color:#ff0; margin:24px 0; }
   #overlay .controls { font-size:16px; line-height:1.9; max-width:680px; opacity:.85; }
   #overlay .controls b { color:#9cf; }
+  #playerName { width:min(360px,72vw); height:42px; box-sizing:border-box; margin:0 0 14px; padding:0 14px; border:1px solid rgba(255,255,255,.35); border-radius:6px; background:rgba(0,0,0,.42); color:#fff; font-size:18px; text-align:center; outline:none; }
+  #playerName:focus { border-color:#ff0; box-shadow:0 0 0 2px rgba(255,255,0,.18); }
+  #ranking { min-width:min(420px,82vw); margin:8px 0 18px; font-size:16px; line-height:1.7; text-align:left; }
+  #ranking .row { display:grid; grid-template-columns:42px 1fr 72px 64px; gap:10px; border-bottom:1px solid rgba(255,255,255,.12); }
+  #ranking .empty { text-align:center; opacity:.72; }
+  #netPanel { width:min(720px,86vw); margin:8px 0 16px; font-size:14px; line-height:1.5; }
+  #netPanel .rowbtn { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin:8px 0; }
+  #netPanel button { border:1px solid rgba(255,255,255,.35); border-radius:6px; background:rgba(255,255,255,.1); color:#fff; padding:8px 12px; cursor:pointer; }
+  #netPanel button:hover { background:rgba(255,255,255,.18); }
+  #netPanel textarea { width:100%; height:58px; box-sizing:border-box; margin:5px 0; padding:8px; border:1px solid rgba(255,255,255,.25); border-radius:6px; background:rgba(0,0,0,.36); color:#fff; resize:vertical; font-size:12px; }
+  #netStatus { color:#9cf; min-height:20px; }
   .hide { display:none !important; }
   #viewmodel { position:absolute; right:0; bottom:0; width:50%; height:55%; pointer-events:none; overflow:hidden; }
   #viewmodel svg { position:absolute; right:-20px; bottom:-30px; width:100%; height:100%; }
@@ -59,7 +70,20 @@
 </div>
 <div id="overlay">
   <h1 id="title">刀劍與槍</h1>
-  <div class="sub" id="subtitle">點擊開始</div>
+  <div class="sub" id="subtitle">輸入名字後點擊開始</div>
+  <input id="playerName" maxlength="18" autocomplete="off" placeholder="玩家名字" />
+  <div id="ranking"></div>
+  <div id="netPanel">
+    <div id="netStatus">單人模式。瀏覽器版無法自動廣播 IP；區網對戰請用下方配對碼。</div>
+    <div class="rowbtn">
+      <button id="hostBtn" type="button">建立區網房間</button>
+      <button id="joinBtn" type="button">加入房間</button>
+      <button id="connectBtn" type="button">套用對方回覆碼</button>
+      <button id="soloBtn" type="button">單人模式</button>
+    </div>
+    <textarea id="localCode" readonly placeholder="本機配對碼會出現在這裡"></textarea>
+    <textarea id="remoteCode" placeholder="貼上對方配對碼"></textarea>
+  </div>
   <div class="controls">
     <b>1</b> 手槍 &nbsp; <b>2</b> 衝鋒槍 &nbsp; <b>3</b> 機關槍 &nbsp; <b>4</b> 火箭筒 &nbsp; <b>5</b> 刀劍 &nbsp; <b>6</b> 狙擊槍<br>
     <b>WASD</b> 移動 &nbsp; <b>Shift</b> 衝刺 &nbsp; <b>空白</b> 跳躍 &nbsp; <b>滑鼠</b> 瞄準 &nbsp; <b>左鍵</b> 攻擊 &nbsp; <b>右鍵</b> 瞄準鏡 &nbsp; <b>Q</b> 切武器 &nbsp; <b>R</b> 換彈<br>
@@ -232,26 +256,44 @@ grid.position.y = 0.02;
 scene.add(grid);
 
 // ============ Obstacles ============
-const obstacles = []; // {minX,maxX,minY,maxY,minZ,maxZ}
+const obstacles = []; // {minX,maxX,minY,maxY,minZ,maxZ,mesh,destructible}
+const destructibleObstacleDefs = [];
 
-function addObstacleBox(cx, cy, cz, sx, sy, sz, mat, collide=true) {
+function addObstacleBox(cx, cy, cz, sx, sy, sz, mat, collide=true, destructible=true, track=true) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
   mesh.position.set(cx, cy, cz);
   scene.add(mesh);
   if (collide) {
-    obstacles.push({
+    const obstacle = {
       minX: cx - sx/2, maxX: cx + sx/2,
       minY: cy - sy/2, maxY: cy + sy/2,
       minZ: cz - sz/2, maxZ: cz + sz/2,
-    });
+      mesh,
+      destructible,
+    };
+    obstacles.push(obstacle);
+    if (destructible && track) destructibleObstacleDefs.push({ cx, cy, cz, sx, sy, sz, mat });
+  }
+}
+
+function restoreDestructibleObstacles() {
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const b = obstacles[i];
+    if (!b.destructible) continue;
+    scene.remove(b.mesh);
+    b.mesh.geometry.dispose();
+    obstacles.splice(i, 1);
+  }
+  for (const d of destructibleObstacleDefs) {
+    addObstacleBox(d.cx, d.cy, d.cz, d.sx, d.sy, d.sz, d.mat, true, true, false);
   }
 }
 
 // Arena walls (visual + collision)
-addObstacleBox(0, 2, -ARENA, ARENA*2, 4, 1, mats.wall);
-addObstacleBox(0, 2,  ARENA, ARENA*2, 4, 1, mats.wall);
-addObstacleBox(-ARENA, 2, 0, 1, 4, ARENA*2, mats.wall);
-addObstacleBox( ARENA, 2, 0, 1, 4, ARENA*2, mats.wall);
+addObstacleBox(0, 2, -ARENA, ARENA*2, 4, 1, mats.wall, true, false);
+addObstacleBox(0, 2,  ARENA, ARENA*2, 4, 1, mats.wall, true, false);
+addObstacleBox(-ARENA, 2, 0, 1, 4, ARENA*2, mats.wall, true, false);
+addObstacleBox( ARENA, 2, 0, 1, 4, ARENA*2, mats.wall, true, false);
 
 function rng() { return Math.random(); }
 
@@ -337,8 +379,8 @@ const player = {
   yaw: 0, pitch: 0,
   hp: PLAYER_MAX_HP,
   weapon: 0,
-  ammo: [16, 0, 0, 0, 0, 0],
-  owned: [true, false, false, false, false, false],
+  ammo: WEAPONS.map(w => w.mag),
+  owned: WEAPONS.map(() => true),
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
@@ -346,7 +388,31 @@ const player = {
   onGround: true,
   prevJump: false,
 };
+const remotePlayer = {
+  pos: new THREE.Vector3(0, 1.7, 0),
+  yaw: Math.PI, pitch: 0,
+  hp: PLAYER_MAX_HP,
+  weapon: 0,
+  alive: false,
+  group: new THREE.Group(),
+};
+function buildRemotePlayer() {
+  const body = new THREE.Mesh(geo.enemyBody, new THREE.MeshLambertMaterial({ color: 0x2c5cc8 }));
+  body.position.y = 1; remotePlayer.group.add(body);
+  const head = new THREE.Mesh(geo.enemyHead, new THREE.MeshLambertMaterial({ color: 0x91b6ff }));
+  head.position.y = 2.3; remotePlayer.group.add(head);
+  const gun = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.18, 0.18), new THREE.MeshLambertMaterial({ color: 0x111827 }));
+  gun.position.set(0.55, 1.25, 0.25); remotePlayer.group.add(gun);
+  remotePlayer.group.visible = false;
+  scene.add(remotePlayer.group);
+}
+buildRemotePlayer();
 let score = 0, wave = 1, gameOver = false, won = false, started = false, paused = false;
+let playerName = '玩家';
+let gameOverRecorded = false;
+const DUEL_KILLS_TO_WIN = 10;
+let lanDuel = false, netRole = 'solo', netConnected = false, netRespawn = 0;
+let remoteName = '對手', remoteScore = 0, remoteRespawn = 0, remoteLastSeen = 0;
 let waveDelay = 0;    // countdown before next wave spawns
 let waveInProgress = true;  // false when between waves
 
@@ -354,6 +420,7 @@ let waveInProgress = true;  // false when between waves
 const tank = {
   pos: new THREE.Vector3(0, 0, 9),
   yaw: 0, hp: 600, maxHp: 600, fireCd: 0,
+  smashCd: 0,
   alive: true,
   group: new THREE.Group(),
 };
@@ -624,8 +691,80 @@ function rayAABB(ox, oy, oz, dx, dy, dz, minX, minY, minZ, maxX, maxY, maxZ) {
   return tmin > 0 ? tmin : null;
 }
 
+function hasLineOfSight(from, to) {
+  const dir = to.clone().sub(from);
+  const dist = dir.length();
+  if (dist <= 0.001) return true;
+  dir.divideScalar(dist);
+  for (const b of obstacles) {
+    const t = rayAABB(from.x, from.y, from.z, dir.x, dir.y, dir.z,
+      b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ);
+    if (t !== null && t < dist - 0.05) return false;
+  }
+  return true;
+}
+
+function tankBlockersAt(x, z, radius) {
+  const hits = [];
+  for (const b of obstacles) {
+    if (b.maxY < 0.35) continue;
+    if (x > b.minX - radius && x < b.maxX + radius &&
+        z > b.minZ - radius && z < b.maxZ + radius) {
+      hits.push(b);
+    }
+  }
+  return hits;
+}
+
+function spawnTankBreakEffect(b) {
+  const cx = (b.minX + b.maxX) * 0.5;
+  const cy = (b.minY + b.maxY) * 0.5;
+  const cz = (b.minZ + b.maxZ) * 0.5;
+  const sx = b.maxX - b.minX;
+  const sz = b.maxZ - b.minZ;
+  const radius = Math.min(4, Math.max(1.5, Math.max(sx, sz) * 0.25));
+  if (tank.smashCd <= 0) {
+    SFX.explode();
+    tank.smashCd = 0.18;
+  }
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffaa44, transparent: true, opacity: 0.55 });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.5, 12, 8), mat);
+  m.position.set(cx, cy, cz);
+  scene.add(m);
+  explosions.push({ mesh: m, life: 0.35, maxLife: 0.35, maxRadius: radius });
+}
+
+function breakObstacle(b) {
+  if (!b.destructible) return;
+  spawnTankBreakEffect(b);
+  scene.remove(b.mesh);
+  b.mesh.geometry.dispose();
+  const idx = obstacles.indexOf(b);
+  if (idx >= 0) obstacles.splice(idx, 1);
+}
+
+function moveTank2D(dx, dz) {
+  moveTankAxis(dx, 0);
+  moveTankAxis(0, dz);
+}
+
+function moveTankAxis(dx, dz) {
+  if (Math.abs(dx) + Math.abs(dz) < 0.000001) return;
+  const nx = Math.max(-ARENA + 3, Math.min(ARENA - 3, tank.pos.x + dx));
+  const nz = Math.max(-ARENA + 3, Math.min(ARENA - 3, tank.pos.z + dz));
+  let blocked = false;
+  for (const b of tankBlockersAt(nx, nz, TANK_COLLIDE_R)) {
+    if (b.destructible) breakObstacle(b);
+    else blocked = true;
+  }
+  if (!blocked) {
+    tank.pos.x = nx;
+    tank.pos.z = nz;
+  }
+}
+
 function hitscan(origin, dir, range) {
-  let bestT = range, bestE = null, bestHit = null;
+  let bestT = range, bestE = null, bestHit = null, bestRemote = false;
   for (const e of enemies) {
     if (!e.alive) continue;
     const r = e.type === 2 ? 2.0 : 0.55;
@@ -633,7 +772,16 @@ function hitscan(origin, dir, range) {
     const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
       e.pos.x - r, 0, e.pos.z - r, e.pos.x + r, h, e.pos.z + r);
     if (t !== null && t < bestT) {
-      bestT = t; bestE = e;
+      bestT = t; bestE = e; bestRemote = false;
+      bestHit = new THREE.Vector3().copy(dir).multiplyScalar(t).add(origin);
+    }
+  }
+  if (lanDuel && remotePlayer.alive) {
+    const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
+      remotePlayer.pos.x - 0.55, remotePlayer.pos.y - 1.7, remotePlayer.pos.z - 0.55,
+      remotePlayer.pos.x + 0.55, remotePlayer.pos.y + 0.65, remotePlayer.pos.z + 0.55);
+    if (t !== null && t < bestT) {
+      bestT = t; bestE = null; bestRemote = true;
       bestHit = new THREE.Vector3().copy(dir).multiplyScalar(t).add(origin);
     }
   }
@@ -641,14 +789,14 @@ function hitscan(origin, dir, range) {
     const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
       b.minX, b.minY, b.minZ, b.maxX, b.maxY, b.maxZ);
     if (t !== null && t < bestT) {
-      bestT = t; bestE = null;
+      bestT = t; bestE = null; bestRemote = false;
       bestHit = new THREE.Vector3().copy(dir).multiplyScalar(t).add(origin);
     }
   }
   if (!bestHit) {
     bestHit = new THREE.Vector3().copy(dir).multiplyScalar(range).add(origin);
   }
-  return { enemy: bestE, point: bestHit, dist: bestT };
+  return { enemy: bestE, remote: bestRemote, point: bestHit, dist: bestT };
 }
 
 function applySpread(dir, spread) {
@@ -728,6 +876,13 @@ function firePlayerWeapon(eye, forward, right) {
   if (w.melee) {
     player.swordAnim = 0.3;
     SFX.sword();
+    if (lanDuel && remotePlayer.alive) {
+      const toRemote = remotePlayer.pos.clone().add(new THREE.Vector3(0, 1, 0)).sub(eye);
+      const rd = toRemote.length();
+      if (rd < w.range && toRemote.divideScalar(rd).dot(forward) > 0.52) {
+        hitRemotePlayer(w.dmg, eye);
+      }
+    }
     for (const e of enemies) {
       if (!e.alive) continue;
       const to = e.pos.clone().add(new THREE.Vector3(0, 1, 0)).sub(eye);
@@ -760,6 +915,7 @@ function firePlayerWeapon(eye, forward, right) {
   }
   const hit = hitscan(eye, dir, w.range);
   if (hit.enemy) damageEnemy(hit.enemy, w.dmg, hit.point);
+  if (hit.remote) hitRemotePlayer(w.dmg, hit.point);
   fireTracer(muzzle, hit.point, w.sniper ? 0xffffff : (w.name === '機關槍' ? 0xff7700 : 0xffdd33));
 }
 
@@ -820,6 +976,7 @@ spawnWave(1);
 // ============ Input ============
 const keys = {};
 let mouseDX = 0, mouseDY = 0;
+let mouseLookIgnoreFrames = 0;
 let mouseDown = false, mousePressed = false, rmbDown = false;
 window.addEventListener('keydown', e => {
   // Prevent space from scrolling the page when game is focused
@@ -838,6 +995,7 @@ window.addEventListener('mouseup', e => {
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('mousemove', e => {
   if (document.pointerLockElement === canvas) {
+    if (mouseLookIgnoreFrames > 0) return;
     mouseDX += e.movementX;
     mouseDY += e.movementY;
   }
@@ -856,6 +1014,288 @@ const waveinfo = document.getElementById('waveinfo');
 const weaponinfo = document.getElementById('weaponinfo');
 const hint = document.getElementById('hint');
 const viewmodelEl = document.getElementById('viewmodel');
+const playerNameInput = document.getElementById('playerName');
+const rankingEl = document.getElementById('ranking');
+const netPanel = document.getElementById('netPanel');
+const netStatusEl = document.getElementById('netStatus');
+const hostBtn = document.getElementById('hostBtn');
+const joinBtn = document.getElementById('joinBtn');
+const connectBtn = document.getElementById('connectBtn');
+const soloBtn = document.getElementById('soloBtn');
+const localCodeEl = document.getElementById('localCode');
+const remoteCodeEl = document.getElementById('remoteCode');
+
+const RANKING_KEY = 'swordAndGun.rankings.v1';
+playerNameInput.value = localStorage.getItem('swordAndGun.lastName') || '';
+
+function cleanPlayerName(name) {
+  return (name || '').trim().replace(/\s+/g, ' ').slice(0, 18) || '玩家';
+}
+
+function loadRankings() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(RANKING_KEY) || '[]');
+    return Array.isArray(rows) ? rows.filter(r => r && typeof r.score === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRanking(name, finalScore, finalWave, victory) {
+  const rows = loadRankings();
+  rows.push({ name, score: finalScore, wave: finalWave, victory, at: Date.now() });
+  rows.sort((a, b) => b.score - a.score || b.wave - a.wave || b.at - a.at);
+  localStorage.setItem(RANKING_KEY, JSON.stringify(rows.slice(0, 10)));
+}
+
+function renderRankings() {
+  const rows = loadRankings();
+  if (rows.length === 0) {
+    rankingEl.innerHTML = '<div class="empty">尚無排名</div>';
+    return;
+  }
+  rankingEl.innerHTML = rows.map((r, i) =>
+    `<div class="row"><span>#${i + 1}</span><span>${escapeHtml(r.name)}</span><span>${r.score}</span><span>${r.victory ? '勝利' : `第${r.wave}波`}</span></div>`
+  ).join('');
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+// ============ LAN duel via WebRTC manual pairing ============
+let rtcPeer = null, rtcChannel = null;
+
+function setNetStatus(text) {
+  netStatusEl.textContent = text;
+}
+
+function encodeSignal(desc) {
+  return btoa(JSON.stringify(desc));
+}
+
+function decodeSignal(text) {
+  return JSON.parse(atob(text.trim()));
+}
+
+function makePeer() {
+  closeNetwork(false);
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  pc.oniceconnectionstatechange = () => setNetStatus(`連線狀態：${pc.iceConnectionState}`);
+  pc.ondatachannel = e => attachChannel(e.channel);
+  rtcPeer = pc;
+  return pc;
+}
+
+function attachChannel(ch) {
+  rtcChannel = ch;
+  ch.onopen = () => {
+    netConnected = true;
+    setNetStatus('已連線。輸入名字後點擊開始，將進入區網 1v1 對戰。');
+    sendNet({ type: 'hello', name: playerName });
+  };
+  ch.onclose = () => {
+    netConnected = false;
+    setNetStatus('連線已中斷。');
+  };
+  ch.onmessage = e => handleNetMessage(e.data);
+}
+
+function waitForIce(pc) {
+  if (pc.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise(resolve => {
+    const check = () => {
+      if (pc.iceGatheringState === 'complete') {
+        pc.removeEventListener('icegatheringstatechange', check);
+        resolve();
+      }
+    };
+    pc.addEventListener('icegatheringstatechange', check);
+    setTimeout(resolve, 1400);
+  });
+}
+
+async function createHostOffer() {
+  netRole = 'host';
+  const pc = makePeer();
+  attachChannel(pc.createDataChannel('game'));
+  await pc.setLocalDescription(await pc.createOffer());
+  await waitForIce(pc);
+  localCodeEl.value = encodeSignal(pc.localDescription);
+  setNetStatus('房間碼已產生。把上方本機配對碼交給另一台電腦，再貼回對方回覆碼。');
+}
+
+async function createJoinAnswer() {
+  netRole = 'client';
+  const offer = decodeSignal(remoteCodeEl.value);
+  const pc = makePeer();
+  await pc.setRemoteDescription(offer);
+  await pc.setLocalDescription(await pc.createAnswer());
+  await waitForIce(pc);
+  localCodeEl.value = encodeSignal(pc.localDescription);
+  setNetStatus('回覆碼已產生。把上方本機配對碼交回房主。');
+}
+
+async function applyRemoteAnswer() {
+  if (!rtcPeer) throw new Error('尚未建立房間');
+  await rtcPeer.setRemoteDescription(decodeSignal(remoteCodeEl.value));
+  setNetStatus('已套用回覆碼，等待資料通道連線。');
+}
+
+function closeNetwork(resetUi = true) {
+  if (rtcChannel) rtcChannel.close();
+  if (rtcPeer) rtcPeer.close();
+  rtcChannel = null;
+  rtcPeer = null;
+  netConnected = false;
+  if (resetUi) {
+    netRole = 'solo';
+    lanDuel = false;
+    localCodeEl.value = '';
+    remoteCodeEl.value = '';
+    setNetStatus('單人模式。瀏覽器版無法自動廣播 IP；區網對戰請用下方配對碼。');
+  }
+}
+
+function sendNet(msg) {
+  if (rtcChannel && rtcChannel.readyState === 'open') rtcChannel.send(JSON.stringify(msg));
+}
+
+function handleNetMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch { return; }
+  if (msg.type === 'hello') {
+    remoteName = cleanPlayerName(msg.name);
+    return;
+  }
+  if (msg.type === 'state') {
+    if (msg.name) remoteName = cleanPlayerName(msg.name);
+    remotePlayer.pos.set(msg.x || 0, msg.y || 1.7, msg.z || 0);
+    remotePlayer.yaw = msg.yaw || 0;
+    remotePlayer.pitch = msg.pitch || 0;
+    remotePlayer.hp = msg.hp ?? PLAYER_MAX_HP;
+    remotePlayer.weapon = msg.weapon || 0;
+    remotePlayer.alive = !!msg.alive;
+    remoteScore = msg.score || 0;
+    remoteRespawn = msg.respawn || 0;
+    remoteLastSeen = performance.now();
+    return;
+  }
+  if (msg.type === 'hit') {
+    applyNetworkHit(msg.damage || 0, new THREE.Vector3(msg.sx || 0, msg.sy || 1, msg.sz || 0));
+    return;
+  }
+  if (msg.type === 'killCredit') {
+    score++;
+  }
+}
+
+function sendLocalState() {
+  if (!lanDuel || !netConnected) return;
+  sendNet({
+    type: 'state',
+    name: playerName,
+    x: player.pos.x, y: player.pos.y, z: player.pos.z,
+    yaw: player.yaw, pitch: player.pitch,
+    hp: player.hp,
+    weapon: player.weapon,
+    score,
+    respawn: netRespawn,
+    alive: player.hp > 0,
+  });
+}
+
+function applyNetworkHit(damage, source) {
+  if (!lanDuel || netRespawn > 0 || player.hp <= 0) return;
+  player.hp = Math.max(0, player.hp - damage);
+  showDamageFrom(source);
+  SFX.playerHurt();
+  if (player.hp <= 0) {
+    netRespawn = 3;
+    sendNet({ type: 'killCredit' });
+  }
+}
+
+function hitRemotePlayer(damage, source) {
+  if (!lanDuel || !netConnected || !remotePlayer.alive) return;
+  sendNet({ type: 'hit', damage, sx: source.x, sy: source.y, sz: source.z });
+}
+
+function clearCombatActors() {
+  for (const e of enemies) scene.remove(e.group);
+  enemies.length = 0;
+  for (const b of enemyBullets) scene.remove(b.mesh);
+  enemyBullets.length = 0;
+  ally.alive = false;
+  ally.group.visible = false;
+  tank.alive = false;
+  tank.group.visible = false;
+  inTank = false;
+  waveInProgress = false;
+  waveDelay = 0;
+}
+
+function setupDuelRound() {
+  clearCombatActors();
+  score = 0;
+  remoteScore = 0;
+  netRespawn = 0;
+  remoteRespawn = 0;
+  player.hp = PLAYER_MAX_HP;
+  player.pos.set(netRole === 'host' ? -18 : 18, 1.7, 0);
+  player.yaw = netRole === 'host' ? Math.PI / 2 : -Math.PI / 2;
+  player.pitch = 0;
+  player.velY = 0;
+  player.onGround = true;
+  remotePlayer.pos.set(netRole === 'host' ? 18 : -18, 1.7, 0);
+  remotePlayer.yaw = netRole === 'host' ? -Math.PI / 2 : Math.PI / 2;
+  remotePlayer.hp = PLAYER_MAX_HP;
+  remotePlayer.alive = false;
+  remotePlayer.group.visible = false;
+  sendNet({ type: 'hello', name: playerName });
+  sendLocalState();
+}
+
+function updateDuel(dt) {
+  if (netRespawn > 0) {
+    netRespawn -= dt;
+    if (netRespawn <= 0) {
+      player.hp = PLAYER_MAX_HP;
+      player.pos.set(netRole === 'host' ? -18 : 18, 1.7, 0);
+      player.yaw = netRole === 'host' ? Math.PI / 2 : -Math.PI / 2;
+      player.pitch = 0;
+      player.velY = 0;
+      player.onGround = true;
+      netRespawn = 0;
+    }
+  }
+  remotePlayer.group.visible = remotePlayer.alive && performance.now() - remoteLastSeen < 3000;
+  remotePlayer.group.position.copy(remotePlayer.pos);
+  remotePlayer.group.rotation.y = remotePlayer.yaw;
+  sendLocalState();
+  if (score >= DUEL_KILLS_TO_WIN || remoteScore >= DUEL_KILLS_TO_WIN) {
+    won = score >= DUEL_KILLS_TO_WIN;
+    gameOver = true;
+  }
+}
+
+hostBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  try { await createHostOffer(); } catch (err) { setNetStatus(`建立失敗：${err.message}`); }
+});
+joinBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  try { await createJoinAnswer(); } catch (err) { setNetStatus(`加入失敗：${err.message}`); }
+});
+connectBtn.addEventListener('click', async e => {
+  e.stopPropagation();
+  try { await applyRemoteAnswer(); } catch (err) { setNetStatus(`套用失敗：${err.message}`); }
+});
+soloBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  closeNetwork(true);
+});
+netPanel.addEventListener('click', e => e.stopPropagation());
 
 // ============ Damage indicator ============
 const dmgIndEl = document.getElementById('dmgInd');
@@ -891,19 +1331,76 @@ function renderDamageIndicators(dt) {
   dmgIndEl.innerHTML = html;
 }
 
-overlay.addEventListener('click', () => {
+function showStartOverlay() {
+  titleEl.textContent = '刀劍與槍';
+  titleEl.style.color = '#fff';
+  subtitleEl.textContent = '輸入名字後點擊開始';
+  playerNameInput.classList.remove('hide');
+  netPanel.classList.remove('hide');
+  renderRankings();
+  overlay.classList.remove('hide');
+  playerNameInput.focus();
+}
+
+function startRun() {
+  playerName = cleanPlayerName(playerNameInput.value);
+  playerNameInput.value = playerName;
+  localStorage.setItem('swordAndGun.lastName', playerName);
+  rankingEl.innerHTML = '';
+  playerNameInput.classList.add('hide');
+  netPanel.classList.add('hide');
+  lanDuel = netConnected;
+  if (lanDuel) setupDuelRound();
+  canvas.requestPointerLock();
+}
+
+function finishRun() {
+  const firstFinish = !gameOverRecorded;
+  if (firstFinish) {
+    saveRanking(playerName, score, wave, won);
+    gameOverRecorded = true;
+  } else if (!overlay.classList.contains('hide')) {
+    return;
+  }
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  titleEl.textContent = won ? '勝利！' : '你死了';
+  titleEl.style.color = won ? '#5f5' : '#f55';
+  subtitleEl.textContent = lanDuel
+    ? `${playerName} ${score} : ${remoteScore} ${remoteName}　點擊重新開始`
+    : `${playerName}　分數 ${score}　點擊重新開始`;
+  playerNameInput.classList.add('hide');
+  netPanel.classList.remove('hide');
+  renderRankings();
+  overlay.classList.remove('hide');
+}
+
+overlay.addEventListener('click', e => {
+  if (e.target === playerNameInput) return;
   ensureAudio();
   if (gameOver) { restart(); return; }
+  if (!started) { startRun(); return; }
   canvas.requestPointerLock();
 });
 
+playerNameInput.addEventListener('keydown', e => {
+  if (e.code !== 'Enter') return;
+  e.preventDefault();
+  ensureAudio();
+  if (!started && !gameOver) startRun();
+});
+
+showStartOverlay();
+
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement === canvas) {
+    const firstStart = !started;
     overlay.classList.add('hide');
     started = true;
     paused = false;
     // Drop any input that piled up while paused
     mouseDX = 0; mouseDY = 0;
+    mouseLookIgnoreFrames = 6;
+    if (firstStart) player.pitch = 0;
     mouseDown = false; mousePressed = false;
     for (const k of Object.keys(keys)) keys[k] = false;
     // Grace period whenever we start or resume — clears frozen bullets and
@@ -934,6 +1431,7 @@ function restart() {
   tracers.length = 0;
   for (const x of explosions) { scene.remove(x.mesh); x.mesh.geometry.dispose(); x.mesh.material.dispose(); }
   explosions.length = 0;
+  restoreDestructibleObstacles();
   for (const p of packs) { p.active = true; p.respawn = 0; p.group.visible = true; }
 
   player.pos.set(0, 1.7, 0);
@@ -941,13 +1439,18 @@ function restart() {
   player.onGround = true;
   player.prevJump = false;
   player.yaw = 0; player.pitch = 0;
+  mouseDX = 0; mouseDY = 0; mouseLookIgnoreFrames = 6;
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
-  player.ammo = [16, 0, 0, 0, 0, 0];
-  player.owned = [true, false, false, false, false, false];
+  player.ammo = WEAPONS.map(w => w.mag);
+  player.owned = WEAPONS.map(() => true);
   player.reload = 0; player.cooldown = 0; player.swordAnim = 0;
+  netRespawn = 0;
+  remoteRespawn = 0;
+  remotePlayer.alive = false;
+  remotePlayer.group.visible = false;
 
-  tank.pos.set(0, 0, 9); tank.yaw = 0; tank.hp = tank.maxHp; tank.fireCd = 0;
+  tank.pos.set(0, 0, 9); tank.yaw = 0; tank.hp = tank.maxHp; tank.fireCd = 0; tank.smashCd = 0;
   tank.alive = true; tank.group.visible = true;
   inTank = false; prevF = false;
 
@@ -955,14 +1458,15 @@ function restart() {
   ally.fireCd = 0; ally.respawn = 0; ally.alive = true;
   ally.group.visible = true;
 
-  score = 0; wave = 1; gameOver = false; won = false;
+  score = 0; wave = 1; gameOver = false; won = false; gameOverRecorded = false;
+  started = false; paused = false; lanDuel = false;
   waveDelay = 0; waveInProgress = false;
   spawnWeaponPickups();
   spawnWave(1);
-
-  titleEl.textContent = '刀劍與槍';
-  titleEl.style.color = '#fff';
-  subtitleEl.textContent = '點擊開始';
+  mouseDown = false; mousePressed = false; rmbDown = false;
+  for (const k of Object.keys(keys)) keys[k] = false;
+  netPanel.classList.remove('hide');
+  showStartOverlay();
 }
 
 // ============ Update logic ============
@@ -973,6 +1477,11 @@ const tmpEye = new THREE.Vector3();
 
 function update(dt) {
   // Mouse look (drives player yaw/pitch in both modes)
+  if (mouseLookIgnoreFrames > 0) {
+    mouseDX = 0;
+    mouseDY = 0;
+    mouseLookIgnoreFrames--;
+  }
   const sensScale = currentFov / BASE_FOV;
   if (inTank) {
     tank.yaw -= mouseDX * 0.0022 * sensScale;
@@ -991,6 +1500,11 @@ function update(dt) {
   tmpRight.crossVectors(tmpFlatFwd, new THREE.Vector3(0, 1, 0)).normalize();
 
   if (gameOver) { mousePressed = false; return; }
+  if (lanDuel && netRespawn > 0) {
+    updateDuel(dt);
+    mousePressed = false;
+    return;
+  }
 
   // F to enter/exit tank
   const fNow = !!keys['KeyF'];
@@ -1019,10 +1533,8 @@ function update(dt) {
     let drive = 0;
     if (keys['KeyW']) drive += 1;
     if (keys['KeyS']) drive -= 0.55;
-    const nx = tank.pos.x + tFwd.x * drive * 7.5 * dt;
-    const nz = tank.pos.z + tFwd.z * drive * 7.5 * dt;
-    tank.pos.x = Math.max(-ARENA + 3, Math.min(ARENA - 3, nx));
-    tank.pos.z = Math.max(-ARENA + 3, Math.min(ARENA - 3, nz));
+    moveTank2D(tFwd.x * drive * 7.5 * dt, tFwd.z * drive * 7.5 * dt);
+    if (tank.smashCd > 0) tank.smashCd -= dt;
     player.pos.copy(tank.pos);
     player.yaw = tank.yaw;
 
@@ -1113,7 +1625,7 @@ function update(dt) {
   mousePressed = false;
 
   // Enemies
-  for (const e of enemies) {
+  if (!lanDuel) for (const e of enemies) {
     if (!e.alive) continue;
     if (e.hitFlash > 0) e.hitFlash -= dt;
     e.attackCd -= dt;
@@ -1208,7 +1720,7 @@ function update(dt) {
   }
 
   // Ally
-  updateAlly(dt);
+  if (!lanDuel) updateAlly(dt);
 
   // Bullets
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
@@ -1256,8 +1768,13 @@ function update(dt) {
     for (const e of enemies) {
       if (e.alive && e.pos.distanceTo(r.pos) < (e.type === 2 ? 2.4 : 1.2)) { explode = true; break; }
     }
+    if (lanDuel && remotePlayer.alive && remotePlayer.pos.distanceTo(r.pos) < 1.2) explode = true;
     if (explode) {
       spawnExplosion(r.pos.clone(), r.radius, r.damage);
+      if (lanDuel && remotePlayer.alive) {
+        const rd = remotePlayer.pos.distanceTo(r.pos);
+        if (rd <= r.radius) hitRemotePlayer(r.damage * (1 - rd / r.radius * 0.55), r.pos);
+      }
       scene.remove(r.mesh);
       if (r.trail) { scene.remove(r.trail); r.trail.geometry.dispose(); r.trail.material.dispose(); }
       playerRockets.splice(i, 1);
@@ -1339,19 +1856,23 @@ function update(dt) {
       enemies.splice(i, 1);
     }
   }
-  if (enemies.length === 0 && waveInProgress) {
+  if (!lanDuel && enemies.length === 0 && waveInProgress) {
     waveInProgress = false;
     if (wave >= 8) { won = true; gameOver = true; SFX.victory(); }
     else { waveDelay = 2.5; showBanner(`第 ${wave} 波完成！`, 2.0); SFX.waveClear(); }
   }
-  if (waveDelay > 0) {
+  if (!lanDuel && waveDelay > 0) {
     waveDelay -= dt;
     if (waveDelay <= 0) {
       wave++;
       spawnWave(wave);
     }
   }
-  if (player.hp <= 0) { player.hp = 0; if (!gameOver) SFX.death(); gameOver = true; }
+  if (lanDuel) {
+    updateDuel(dt);
+  } else if (player.hp <= 0) {
+    player.hp = 0; if (!gameOver) SFX.death(); gameOver = true;
+  }
 }
 
 function moveEnemy(e, delta) {
@@ -1406,11 +1927,12 @@ function updateAlly(dt) {
     ally.pos.x = p.x; ally.pos.z = p.z;
   }
   ally.fireCd -= dt;
-  if (target && ally.fireCd <= 0 && dist < 45) {
-    ally.fireCd = 0.28;
-    const from = ally.pos.clone().add(new THREE.Vector3(0, 1.25, 0));
-    damageEnemy(target, 8, target.pos.clone());
-    fireTracer(from, target.pos.clone().add(new THREE.Vector3(0, 1, 0)), 0x66ccff);
+  const from = ally.pos.clone().add(new THREE.Vector3(0, 1.25, 0));
+  const targetPoint = target ? target.pos.clone().add(new THREE.Vector3(0, 1, 0)) : null;
+  if (target && ally.fireCd <= 0 && dist < 45 && hasLineOfSight(from, targetPoint)) {
+    ally.fireCd = 0.55;
+    damageEnemy(target, 6, target.pos.clone());
+    fireTracer(from, targetPoint, 0x66ccff);
   }
   const lookTo = target ? target.pos : player.pos;
   const lookDir = lookTo.clone().sub(ally.pos);
@@ -1497,10 +2019,15 @@ function svgViewModel(weaponName) {
         <polygon points="100,265 50,290 100,320" fill="#dc4422"/>
       </svg>`;
     case '刀劍':
+      const swing = Math.max(0, Math.min(1, player.swordAnim / 0.3));
+      const angle = -62 * swing;
+      const lift = -72 * swing;
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
-        <rect x="220" y="340" width="50" height="40" fill="#6b3e1f"/>
-        <rect x="200" y="320" width="90" height="22" fill="#b09030"/>
-        <polygon points="240,320 270,320 350,80 320,60" fill="#d8dce0" stroke="#88898d" stroke-width="2"/>
+        <g transform="translate(0 ${lift.toFixed(1)}) rotate(${angle.toFixed(1)} 245 345)">
+          <rect x="220" y="340" width="50" height="40" fill="#6b3e1f"/>
+          <rect x="200" y="320" width="90" height="22" fill="#b09030"/>
+          <polygon points="240,320 270,320 350,80 320,60" fill="#d8dce0" stroke="#88898d" stroke-width="2"/>
+        </g>
       </svg>`;
     case '狙擊槍':
       return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMax meet">
@@ -1527,13 +2054,21 @@ function updateHud() {
   } else {
     tankbar.style.display = 'none';
   }
-  waveinfo.innerHTML = `第 ${wave}/8 波<br>分數 ${score}<br>敵人 ${enemies.length}`;
+  if (lanDuel) {
+    const peerState = netConnected ? (remotePlayer.alive ? `對手HP ${Math.round(remotePlayer.hp)}` : `對手重生 ${remoteRespawn.toFixed(1)}s`) : '等待連線';
+    const selfState = netRespawn > 0 ? `<br>重生 ${netRespawn.toFixed(1)}s` : '';
+    waveinfo.innerHTML = `區網對戰<br>${playerName} ${score} : ${remoteScore} ${remoteName}<br>${peerState}${selfState}`;
+  } else {
+    waveinfo.innerHTML = `第 ${wave}/8 波<br>分數 ${score}<br>敵人 ${enemies.length}`;
+  }
   if (inTank) {
     weaponinfo.textContent = '坦克炮 (按 F 下車)';
   } else {
     const ammoTxt = w.mag === 0 ? '' : (player.reload > 0 ? ' 換彈中…' : ` ${player.ammo[player.weapon]}/${w.mag}`);
     const ownedCount = player.owned.filter(b => b).length;
-    weaponinfo.textContent = `${player.weapon + 1}. ${w.name}${ammoTxt}   武器 ${ownedCount}/${WEAPONS.length}`;
+    weaponinfo.textContent = lanDuel
+      ? `${player.weapon + 1}. ${w.name}${ammoTxt}   先到 ${DUEL_KILLS_TO_WIN} 擊殺`
+      : `${player.weapon + 1}. ${w.name}${ammoTxt}   武器 ${ownedCount}/${WEAPONS.length}`;
   }
 
   if (started && !inTank && tank.alive && player.pos.distanceTo(tank.pos) < 5 && !gameOver) {
@@ -1544,17 +2079,14 @@ function updateHud() {
   }
 
   // Weapon view model (only refresh on change for perf)
-  const key = inTank ? 'tank' : w.name + (started ? '' : 'X');
+  const key = inTank ? 'tank' : w.name + (started ? '' : 'X') + (w.melee ? `:${player.swordAnim.toFixed(2)}` : '');
   if (lastWeapon !== key) {
     viewmodelEl.innerHTML = svgViewModel(w.name);
     lastWeapon = key;
   }
 
   if (gameOver) {
-    titleEl.textContent = won ? '勝利！' : '你死了';
-    titleEl.style.color = won ? '#5f5' : '#f55';
-    subtitleEl.textContent = `分數 ${score}　點擊重玩`;
-    overlay.classList.remove('hide');
+    finishRun();
   }
 }
 

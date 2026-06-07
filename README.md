@@ -8,9 +8,20 @@ Five weapons (pistol, SMG, machine gun, RPG, sword), three enemy types (shooters
 
 1. Download `game.html`
 2. Double-click to open in your browser (or drag it into a browser window)
-3. Click the screen — pointer lock engages and the round begins
+3. Enter a player name, then click the screen — pointer lock engages and the round begins
 
 Internet is required on first load to fetch Three.js from the CDN; after that the browser cache will serve it offline.
+
+## LAN duel
+
+The browser version supports a two-computer LAN duel through WebRTC manual pairing:
+
+1. On one computer, click **建立區網房間** and send the generated local pairing code to the other computer.
+2. On the other computer, paste that code, click **加入房間**, then send its generated reply code back.
+3. On the host computer, paste the reply code and click **套用對方回覆碼**.
+4. Once connected, enter names and start. The game switches to a 1v1 duel; first to 10 kills wins.
+
+Browsers cannot do raw UDP IP broadcast or open a LAN socket server from a normal webpage, so automatic IP discovery is not available in `game.html`. This WebRTC path uses no STUN/TURN server and is intended for same-LAN play.
 
 ## Controls
 
@@ -20,7 +31,7 @@ Internet is required on first load to fetch Three.js from the CDN; after that th
 | Sprint | `Shift` |
 | Aim | Mouse |
 | Attack | Left mouse button |
-| Switch weapon | `1` Pistol &nbsp; `2` SMG &nbsp; `3` Machine Gun &nbsp; `4` RPG &nbsp; `5` Sword |
+| Switch weapon | `1` Pistol &nbsp; `2` SMG &nbsp; `3` Machine Gun &nbsp; `4` RPG &nbsp; `5` Sword &nbsp; `6` Sniper |
 | Cycle weapon | `Q` |
 | Reload | `R` |
 | Enter / exit friendly tank | `F` (within 5m of the green tank) |
@@ -49,12 +60,17 @@ Each wave HP scales with wave number. Bigger waves include more of each type.
 
 ## Allies
 
-- **One friendly trooper** (blue, 170 HP). Follows the player at ~4m offset, auto-targets nearest enemy within 45m, fires every 0.28s for 8 damage. Respawns 8 seconds after dying.
-- **One friendly tank** (green, 600 HP). Sits near spawn — walk to it and press `F` to enter. While inside, you control it directly and the camera attaches to the turret. Take heavy fire without losing player HP, but the tank can be destroyed; if it explodes while you're inside, you're ejected with 25 damage. After destruction it does not respawn for the round.
+- **One friendly trooper** (blue, 170 HP). Follows the player at ~4m offset, auto-targets nearest enemy within 45m, and fires only with clear line of sight every 0.55s for 6 damage. Respawns 8 seconds after dying.
+- **One friendly tank** (green, 600 HP). Sits near spawn — walk to it and press `F` to enter. While inside, you control it directly and the camera attaches to the turret. The tank can smash destructible cover and walls by driving into them, but the arena boundary walls still hold. Take heavy fire without losing player HP, but the tank can be destroyed; if it explodes while you're inside, you're ejected with 25 damage. After destruction it does not respawn for the round.
 
 ## Pickups
 
 - **Health packs** — 12 white-and-green crosses placed around the map. Walk over one (within 2m) and you regain 55 HP up to the cap of 180. Each pack respawns 18 seconds after pickup.
+- **Weapon crates** — refill weapons around the arena. All weapons are available from the start.
+
+## Rankings
+
+The start screen asks for a player name. When the run ends, the browser saves the score to a local top-10 ranking board using `localStorage`.
 
 ## Waves
 
