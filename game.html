@@ -222,7 +222,10 @@ const vmHilt  = new THREE.MeshLambertMaterial({ color: 0x78553a });
 function buildViewWeapon(idx) {
   while (viewWeapon.children.length) { const c = viewWeapon.children[0]; viewWeapon.remove(c); if (c.geometry) c.geometry.dispose(); }
   const w = WEAPONS[idx];
-  if (w.melee) {
+  if (w.fist) {
+    const fist = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.18), new THREE.MeshLambertMaterial({ color: 0xe1b496 }));
+    fist.position.z = -0.16; viewWeapon.add(fist);
+  } else if (w.melee) {
     const hilt = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.18), vmHilt); hilt.position.z = -0.09; viewWeapon.add(hilt);
     const blade = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.15, 0.55), vmBlade); blade.position.z = -0.42; viewWeapon.add(blade);
   } else {
@@ -261,6 +264,7 @@ const WEAPONS = [
   { name:'火箭筒', en:'RPG',    mag:5,  dmg:115, cd:0.9,   reload:2.5,  range:100, explosive:true,  spread:0,     full:false, melee:false, sniper:false, sfx:'rpg'    },
   { name:'刀劍',   en:'Sword',  mag:0,  dmg:280, cd:0.35,  reload:0,    range:4.0, explosive:false, spread:0,     full:false, melee:true,  sniper:false, sfx:'sword'  },
   { name:'狙擊槍', en:'Sniper', mag:5,  dmg:180, cd:1.0,   reload:2.2,  range:220, explosive:false, spread:0,     full:false, melee:false, sniper:true,  sfx:'sniper' },
+  { name:'拳頭',   en:'Fists',  mag:0,  dmg:30,  cd:0.4,   reload:0,    range:2.2, explosive:false, spread:0,     full:false, melee:true,  sniper:false, sfx:'sword', fist:true },
 ];
 let lang = 'zh';
 try { lang = localStorage.getItem('swordAndGun.lang') || 'zh'; } catch {}
@@ -439,7 +443,7 @@ const player = {
   hp: PLAYER_MAX_HP,
   weapon: 0,
   ammo: WEAPONS.map(w => w.mag),
-  owned: WEAPONS.map((_, i) => i === 0),   // start with the pistol only; find the rest in crates
+  owned: WEAPONS.map((_, i) => i === 0 || i === WEAPONS.length - 1),   // pistol + fists; find the rest in crates
   reload: 0,
   cooldown: 0,
   swordAnim: 0,
@@ -962,6 +966,12 @@ function firePlayerWeapon(eye, forward, right) {
     return;   // no auto-reload — press R to reload (matches the C# build)
   }
   player.ammo[player.weapon]--;
+  if (w.mag > 0 && player.ammo[player.weapon] <= 0) {   // out of ammo → next owned weapon that still has some (melee counts)
+    for (let s = 1; s <= WEAPONS.length; s++) {
+      const nw = (player.weapon + s) % WEAPONS.length;
+      if (player.owned[nw] && (WEAPONS[nw].mag <= 0 || player.ammo[nw] > 0)) { player.weapon = nw; break; }
+    }
+  }
   SFX[w.sfx]();
   const dir = applySpread(forward, w.spread);
   const muzzle = eye.clone()
@@ -1114,7 +1124,7 @@ function toggleLang() {
   applyLang();
   if (!started && !overlay.classList.contains('hide')) showStartOverlay();
 }
-langBtn.addEventListener('click', toggleLang);
+langBtn.addEventListener('click', e => { e.stopPropagation(); toggleLang(); });   // don't let the click start the game
 window.addEventListener('keydown', e => { if (e.code === 'F10') { e.preventDefault(); toggleLang(); } });
 
 const RANKING_KEY = 'swordAndGun.rankings.v1';
@@ -1537,7 +1547,7 @@ function restart() {
   player.hp = PLAYER_MAX_HP;
   player.weapon = 0;
   player.ammo = WEAPONS.map(w => w.mag);
-  player.owned = WEAPONS.map((_, i) => i === 0);   // pistol only; pick up the rest
+  player.owned = WEAPONS.map((_, i) => i === 0 || i === WEAPONS.length - 1);   // pistol + fists; pick up the rest
   player.reload = 0; player.cooldown = 0; player.swordAnim = 0;
   netRespawn = 0;
   remoteRespawn = 0;

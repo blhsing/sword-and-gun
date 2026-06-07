@@ -95,10 +95,12 @@ var weapons = new Weapon[]
     new("火箭筒", 5, 115, 0.9f, 100, true, 0, false, false),
     new("刀劍", 0, 280, 0.35f, 4, false, 0, false, true),
     new("狙擊槍", 5, 180, 1.0f, 220, false, 0, false, false),
+    new("拳頭", 0, 30, 0.4f, 2.2f, false, 0, false, true),   // always-owned melee fallback
 };
 const int SniperIndex = 5;
+const int FistsIndex = 6;
 const float BaseFov = 75f;
-string[] WeaponEn = { "Pistol", "SMG", "MG", "RPG", "Sword", "Sniper" };
+string[] WeaponEn = { "Pistol", "SMG", "MG", "RPG", "Sword", "Sniper", "Fists" };
 foreach (var wp in weapons) EnsureFontForText(wp.Name);   // bake weapon names so the HUD bar can show them
 
 AppState state = AppState.Start;
@@ -176,8 +178,8 @@ int localMouseStage = 0;
 KeyboardKey[] P1WeaponKeys = { KeyboardKey.One, KeyboardKey.Two, KeyboardKey.Three, KeyboardKey.Four, KeyboardKey.Five, KeyboardKey.Six };
 // P2 has no numpad on a laptop, so weapons 1-6 map to the right of the number row.
 KeyboardKey[] P2WeaponKeys = { KeyboardKey.Seven, KeyboardKey.Eight, KeyboardKey.Nine, KeyboardKey.Zero, KeyboardKey.Minus, KeyboardKey.Equal };
-string[] P1WeaponLabels = { "1", "2", "3", "4", "5", "6" };
-string[] P2WeaponLabels = { "7", "8", "9", "0", "-", "=" };
+string[] P1WeaponLabels = { "1", "2", "3", "4", "5", "6", "" };    // fists has no number key (cycle/auto only)
+string[] P2WeaponLabels = { "7", "8", "9", "0", "-", "=", "" };
 
 BuildWorld();
 ResetRound(false);
@@ -759,6 +761,7 @@ void FireWeaponFor(Player p, Vector3 eye, Vector3 dir, Vector3 rightV, int owner
     {
         if (p.Ammo[p.Weapon] <= 0) return;
         p.Ammo[p.Weapon]--;
+        AutoSwitchIfEmpty(p);
     }
     Vector3 shotDir = ApplySpread(dir, w.Spread);
     Vector3 muzzle = MuzzlePoint(p.Pos, p.Yaw, p.Pitch);
@@ -1049,6 +1052,7 @@ void FireSplitWeapon(Player shooter, Player target, Tank targetTank, Vector3 eye
     {
         if (shooter.Ammo[shooter.Weapon] <= 0) return;
         shooter.Ammo[shooter.Weapon]--;
+        AutoSwitchIfEmpty(shooter);
     }
     Vector3 shotDir = ApplySpread(dir, w.Spread);
     AddFlash(MuzzlePoint(shooter.Pos, shooter.Yaw, shooter.Pitch));
@@ -1104,6 +1108,18 @@ void DamageSplitTank(Tank t, Player owner, float damage, int attackerId, Vector3
 
 List<DamageInd> DmgListFor(Player p) => p == player2 ? dmgIndP2 : dmgIndP1;
 Tank TankOf(Player p) => p == player2 ? player2Tank : playerTank;
+
+// When the current firearm just ran dry, swap to the next owned weapon that still has
+// ammo (melee/infinite weapons always count).
+void AutoSwitchIfEmpty(Player p)
+{
+    if (weapons[p.Weapon].MagSize <= 0 || p.Ammo[p.Weapon] > 0) return;
+    for (int s = 1; s <= weapons.Length; s++)
+    {
+        int nw = (p.Weapon + s) % weapons.Length;
+        if (p.Owned[nw] && (weapons[nw].MagSize <= 0 || p.Ammo[nw] > 0)) { p.Weapon = nw; return; }
+    }
+}
 
 void EjectAndDestroyTank(Tank t, Player owner)
 {
@@ -2052,9 +2068,17 @@ void DrawHeldWeapon(Vector3 origin, float yaw, float pitch, int weapon, float sw
     if (w.Melee)
     {
         float t = swordAnim > 0 ? MathF.Sin(Math.Clamp((0.3f - swordAnim) / 0.3f, 0, 1) * MathF.PI) : 0f;  // 0→1→0
-        Rlgl.Rotatef(70f - t * 120f, 1, 0, 0);   // raised → swung-down arc
-        Raylib.DrawCube(new Vector3(0, 0, 0.18f), 0.12f, 0.12f, 0.34f, new Color(120, 85, 55, 255));   // hilt
-        Raylib.DrawCube(new Vector3(0, 0, 0.95f), 0.06f, 0.34f, 1.05f, new Color(212, 218, 228, 255)); // blade
+        if (weapon == FistsIndex)
+        {
+            Rlgl.Translatef(0, 0, t * 0.3f);   // punch thrust
+            Raylib.DrawCube(new Vector3(0, 0, 0.22f), 0.22f, 0.2f, 0.26f, new Color(225, 180, 150, 255));  // fist
+        }
+        else
+        {
+            Rlgl.Rotatef(70f - t * 120f, 1, 0, 0);   // raised → swung-down arc
+            Raylib.DrawCube(new Vector3(0, 0, 0.18f), 0.12f, 0.12f, 0.34f, new Color(120, 85, 55, 255));   // hilt
+            Raylib.DrawCube(new Vector3(0, 0, 0.95f), 0.06f, 0.34f, 1.05f, new Color(212, 218, 228, 255)); // blade
+        }
     }
     else
     {
@@ -2121,7 +2145,7 @@ void DrawWeaponBar(Player p, string[] keys, float cx, float y, float size)
     float pad = size * 0.9f;
     var widths = new float[weapons.Length];
     float total = 0;
-    string Label(int i) => $"{keys[i]} {WeaponName(i)}{(p.Owned[i] && weapons[i].MagSize > 0 ? " " + p.Ammo[i] : "")}";
+    string Label(int i) => $"{(keys[i].Length > 0 ? keys[i] + " " : "")}{WeaponName(i)}{(p.Owned[i] && weapons[i].MagSize > 0 ? " " + p.Ammo[i] : "")}";
     for (int i = 0; i < weapons.Length; i++)
     {
         widths[i] = Raylib.MeasureTextEx(uiFontSmall, Label(i), size, 1).X;
@@ -2461,7 +2485,7 @@ class Player
     public bool OnGround = true, PrevJump, InTank, PrevF;
     public float Fov = 75f;   // current camera FOV; drops when aiming (sniper zoom)
     public Player(Weapon[] weapons) { Ammo = weapons.Select(w => w.MagSize).ToArray(); Owned = PistolOnly(weapons); }
-    static bool[] PistolOnly(Weapon[] weapons) { var o = new bool[weapons.Length]; o[0] = true; return o; }
+    static bool[] PistolOnly(Weapon[] weapons) { var o = new bool[weapons.Length]; o[0] = true; o[^1] = true; return o; }   // pistol + fists
     public void Reset(Weapon[] weapons)
     {
         Pos = new Vector3(0, 1.7f, 0);
