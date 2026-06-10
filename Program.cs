@@ -126,6 +126,7 @@ Player player2 = new(weapons);
 RemotePlayer remote = new();
 Tank playerTank = new();    // local player's drivable tank (P1 in two-player modes)
 Tank player2Tank = new();   // P2's tank in split / the remote peer's tank in LAN
+Ally ally = new();          // friendly AI trooper (single-player)
 Color FriendlyTankBody = new(70, 110, 90, 255);
 Color FriendlyTankTurret = new(95, 150, 115, 255);
 Color EnemyTankBody = new(120, 60, 60, 255);
@@ -348,8 +349,8 @@ void StartLocalSplit()
     p1Mouse = IntPtr.Zero;
     p2Mouse = IntPtr.Zero;
     localMouseStage = 0;
-    foreach (var dev in RawMouse.Devices.Values) { dev.JustClicked = false; dev.LeftPressedThisFrame = false; }
-    statusText = rawInputAvailable ? "請 P1 點擊自己的滑鼠左鍵" : "Raw Input 不可用：P2 滑鼠可能無法作用";
+    RawMouse.BeginSelect();
+    statusText = rawInputAvailable ? "請 P1 晃動或點擊自己的滑鼠" : "Raw Input 不可用：P2 滑鼠可能無法作用";
     if (rawInputAvailable) state = AppState.LocalMouseSelect;
     else
     {
@@ -360,21 +361,26 @@ void StartLocalSplit()
 
 void UpdateLocalMouseSelect()
 {
+    // A device is picked by clicking/tapping OR by giving it a deliberate wiggle — movement
+    // is the most reliable Raw Input signal, so it works even on mice whose button events
+    // arrive on a HID collection that doesn't surface as a standard mouse click.
+    const long Wiggle = 240;
     foreach (var kv in RawMouse.Devices)
     {
-        if (!kv.Value.JustClicked) continue;
+        if (!kv.Value.JustClicked && kv.Value.SelMove <= Wiggle) continue;
         if (localMouseStage == 0)
         {
             p1Mouse = kv.Key;
             localMouseStage = 1;
-            statusText = "請 P2 點擊自己的滑鼠左鍵";
-            foreach (var dev in RawMouse.Devices.Values) { dev.JustClicked = false; dev.LeftPressedThisFrame = false; }
+            statusText = "請 P2 晃動或點擊另一支滑鼠";
+            RawMouse.BeginSelect();
             return;
         }
-        if (kv.Key == p1Mouse)
+        if (RawMouse.SameGroup(kv.Key, p1Mouse))
         {
-            statusText = "這是 P1 的滑鼠，請 P2 使用另一支滑鼠點擊";
+            statusText = "這是 P1 的滑鼠，請 P2 改用另一支滑鼠";
             kv.Value.JustClicked = false;
+            kv.Value.SelMove = 0;
             return;
         }
         p2Mouse = kv.Key;
@@ -459,6 +465,7 @@ void ResetRound(bool spawnEnemies)
     playerTank.Reset(new Vector3(0, 0, 9), 0);
     player2Tank.Reset(new Vector3(0, 0, 9), 0);
     player2Tank.Alive = false;
+    ally.Pos = new Vector3(-4, 0, -4); ally.Hp = ally.MaxHp; ally.Alive = true; ally.FireCd = 0; ally.Respawn = 0;
     SpawnPickups();
     if (spawnEnemies) SpawnWave(1);
 }
@@ -534,6 +541,7 @@ void UpdateGame(float dt)
     if (mode == GameMode.Single)
     {
         UpdateEnemies(dt);
+        UpdateAlly(dt);
         enemies.RemoveAll(e => !e.Alive);
         if (enemies.Count == 0 && waveDelay <= 0)
         {
@@ -599,13 +607,12 @@ PlayerInput GatherSplitInput(bool p2)
     float mdx = 0, mdy = 0;
     bool fireDown = false, firePressed = false, aimDown = false;
     IntPtr mouse = p2 ? p2Mouse : p1Mouse;
-    if (mouse != IntPtr.Zero && RawMouse.Devices.TryGetValue(mouse, out var dev))
+    if (mouse != IntPtr.Zero && RawMouse.TryReadGroup(mouse, out int dx, out int dy, out bool ld, out bool lp, out bool rd))
     {
-        var (dx, dy) = dev.ConsumeDelta();
         mdx = dx; mdy = dy;
-        fireDown = dev.LeftDown;
-        firePressed = dev.LeftPressedThisFrame;
-        aimDown = dev.RightDown;
+        fireDown = ld;
+        firePressed = lp;
+        aimDown = rd;
     }
     else if (!p2)
     {
@@ -788,7 +795,10 @@ void UpdateEnemies(float dt)
     {
         if (!e.Alive) continue;
         e.AttackCd -= dt;
-        Vector3 to = player.Pos - e.Pos;
+        // Target the nearer of the player and the friendly ally.
+        bool atAlly = ally.Alive && Vector3.DistanceSquared(e.Pos, ally.Pos) < Vector3.DistanceSquared(e.Pos, player.Pos);
+        Vector3 tgtPos = atAlly ? ally.Pos : player.Pos;
+        Vector3 to = tgtPos - e.Pos;
         to.Y = 0;
         float d = to.Length();
         Vector3 dn = d > 0.01f ? to / d : Vector3.Zero;
@@ -799,13 +809,19 @@ void UpdateEnemies(float dt)
             if (e.AttackCd <= 0 && d < 45)
             {
                 e.AttackCd = 1.1f;
-                bullets.Add(new Bullet { Pos = e.Pos + new Vector3(0, 1.1f, 0), Dir = Vector3.Normalize(player.Pos + new Vector3(0, .5f, 0) - (e.Pos + new Vector3(0, 1.1f, 0))), Speed = 26, Damage = 12, Life = 5 });
+                bullets.Add(new Bullet { Pos = e.Pos + new Vector3(0, 1.1f, 0), Dir = Vector3.Normalize(tgtPos + new Vector3(0, .5f, 0) - (e.Pos + new Vector3(0, 1.1f, 0))), Speed = 26, Damage = 12, Life = 5 });
             }
         }
         else if (e.Type == EnemyType.Brawler)
         {
             if (d > 1.8f) MoveEnemy(e, SteerAround(e.Pos, dn, e.Radius) * 5.0f * dt);
-            if (d < 2.2f && e.AttackCd <= 0) { e.AttackCd = 0.85f; player.Hp -= 18; ShowDamageFrom(dmgIndP1, e.Pos, player.Pos); }
+            if (d < 2.2f && e.AttackCd <= 0)
+            {
+                e.AttackCd = 0.85f;
+                if (atAlly) DamageAlly(18, e.Pos);
+                else if (player.InTank && playerTank.Alive) { playerTank.Hp -= 18; ShowDamageFrom(dmgIndP1, e.Pos, playerTank.Pos); if (playerTank.Hp <= 0) EjectAndDestroyTank(playerTank, player); }
+                else { player.Hp -= 18; ShowDamageFrom(dmgIndP1, e.Pos, player.Pos); }
+            }
         }
         else
         {
@@ -813,12 +829,75 @@ void UpdateEnemies(float dt)
             if (e.AttackCd <= 0 && d < 65)
             {
                 e.AttackCd = 2.4f;
-                bullets.Add(new Bullet { Pos = e.Pos + new Vector3(0, 2, 0), Dir = Vector3.Normalize(player.Pos + new Vector3(0, .4f, 0) - (e.Pos + new Vector3(0, 2, 0))), Speed = 18, Damage = 38, Life = 5 });
+                bullets.Add(new Bullet { Pos = e.Pos + new Vector3(0, 2, 0), Dir = Vector3.Normalize(tgtPos + new Vector3(0, .4f, 0) - (e.Pos + new Vector3(0, 2, 0))), Speed = 18, Damage = 38, Life = 5 });
             }
         }
         e.Pos.X = Math.Clamp(e.Pos.X, -Arena + 2, Arena - 2);
         e.Pos.Z = Math.Clamp(e.Pos.Z, -Arena + 2, Arena - 2);
+        // Shove enemies out of the tank so they can't ride the hull/barrel; ramming hurts them.
+        bool rammed = PushOutOfTank(ref e.Pos, e.Radius, playerTank);
+        PushOutOfTank(ref e.Pos, e.Radius, player2Tank);
+        if (rammed && player.InTank) DamageEnemy(e, 130f * dt);
     }
+}
+
+void DamageAlly(float dmg, Vector3 source)
+{
+    if (!ally.Alive) return;
+    ally.Hp -= dmg;
+    if (ally.Hp <= 0) { ally.Alive = false; ally.Respawn = 8f; }
+}
+
+// Friendly AI trooper: follows the player, auto-fires at the nearest enemy in sight.
+void UpdateAlly(float dt)
+{
+    if (!ally.Alive)
+    {
+        ally.Respawn -= dt;
+        if (ally.Respawn <= 0) { ally.Hp = ally.MaxHp; ally.Pos = new Vector3(player.Pos.X + (Rnd() - 0.5f) * 8, 0, player.Pos.Z + (Rnd() - 0.5f) * 8); ally.Alive = true; }
+        return;
+    }
+    if (ally.FireCd > 0) ally.FireCd -= dt;
+    Enemy? target = null; float bd = float.MaxValue;
+    foreach (var e in enemies) { if (!e.Alive) continue; float dd = Vector3.DistanceSquared(ally.Pos, e.Pos); if (dd < bd) { bd = dd; target = e; } }
+    float dist = MathF.Sqrt(bd);
+    Vector3 desired = new(player.Pos.X - 4, 0, player.Pos.Z - 4);   // follow offset
+    if (target != null && dist < 30) desired = ally.Pos;            // hold position to fire
+    Vector3 toDesired = new(desired.X - ally.Pos.X, 0, desired.Z - ally.Pos.Z);
+    if (toDesired.Length() > 3)
+    {
+        Vector3 m = Vector3.Normalize(toDesired) * 3.8f * dt;
+        MoveCircle(ref ally.Pos, new Vector3(m.X, 0, 0), 0.45f);
+        MoveCircle(ref ally.Pos, new Vector3(0, 0, m.Z), 0.45f);
+    }
+    ally.Pos.Y = 0;
+    Vector3 lookAt = target != null ? target.Center : player.Pos;
+    Vector3 lookDir = new(lookAt.X - ally.Pos.X, 0, lookAt.Z - ally.Pos.Z);
+    if (lookDir.LengthSquared() > 0.001f) ally.Yaw = MathF.Atan2(lookDir.X, lookDir.Z);
+    if (target != null && ally.FireCd <= 0 && dist < 45)
+    {
+        Vector3 from = ally.Pos + new Vector3(0, 1.25f, 0);
+        if (HasLineOfSight(from, target.Center))
+        {
+            ally.FireCd = 0.55f;
+            DamageEnemy(target, 6);
+            tracers.Add(new Tracer { From = from, To = target.Center, Life = 0.06f, Color = Color.SkyBlue });
+        }
+    }
+}
+
+bool HasLineOfSight(Vector3 from, Vector3 to)
+{
+    Vector3 dir = to - from;
+    float dist = dir.Length();
+    if (dist < 0.01f) return true;
+    dir /= dist;
+    foreach (var o in obstacles)
+    {
+        var rc = Raylib.GetRayCollisionBox(new Ray(from, dir), o.Box);
+        if (rc.Hit && rc.Distance < dist - 0.15f) return false;
+    }
+    return true;
 }
 
 void UpdateProjectiles(float dt)
@@ -840,6 +919,11 @@ void UpdateProjectiles(float dt)
         {
             player.Hp -= b.Damage;
             ShowDamageFrom(dmgIndP1, b.Pos, player.Pos);
+            bullets.RemoveAt(i);
+        }
+        else if (ally.Alive && mode == GameMode.Single && Vector3.Distance(b.Pos, ally.Pos + new Vector3(0, 1f, 0)) < 0.7f)
+        {
+            DamageAlly(b.Damage, b.Pos);
             bullets.RemoveAt(i);
         }
         else if (b.Life <= 0 || PointInObstacle(b.Pos)) bullets.RemoveAt(i);
@@ -971,7 +1055,7 @@ void UpdatePickupsFor(float dt, params Player[] players)
                 pl.Ammo[c.Weapon] = weapons[c.Weapon].MagSize;
                 if (!wasOwned) pl.Weapon = c.Weapon;
                 c.Active = false;
-                c.Respawn = 22;
+                c.Respawn = 75;   // weapon crates come back only after a long while
                 break;
             }
         }
@@ -1371,17 +1455,18 @@ void ApplyVertical(Player p, bool jumpHeld, float dt)
 }
 
 // Shove a point out of a tank's footprint (so players can't walk through a tank).
-void PushOutOfTank(ref Vector3 pos, float radius, Tank t)
+bool PushOutOfTank(ref Vector3 pos, float radius, Tank t)
 {
-    if (!t.Alive) return;
+    if (!t.Alive) return false;
     float dx = pos.X - t.Pos.X, dz = pos.Z - t.Pos.Z;
     float d = MathF.Sqrt(dx * dx + dz * dz);
     float minD = TankCollideR + radius;
-    if (d >= minD) return;
+    if (d >= minD) return false;
     float nx = d < 0.0001f ? 1 : dx / d;
     float nz = d < 0.0001f ? 0 : dz / d;
     pos.X = t.Pos.X + nx * minD;
     pos.Z = t.Pos.Z + nz * minD;
+    return true;
 }
 
 // Drive a tank with step-aware obstacle blocking; smashes destructible cover it rams.
@@ -1805,19 +1890,20 @@ void DrawJoinLobby()
 void DrawLocalMouseSelect()
 {
     DrawTextC(T("同機雙人指向裝置設定", "Two-player pointing-device setup"), 0, 60, 46, Color.RayWhite, true);
-    DrawTextC(localMouseStage == 0 ? T("請 P1 點一下（或輕拍）自己的裝置", "P1: click (or tap) your own device") : T("請 P2 用另一支裝置點一下（或輕拍）", "P2: click (or tap) the other device"), 0, 134, 26, Color.Yellow, true);
+    DrawTextC(localMouseStage == 0 ? T("請 P1 晃動或點一下自己的裝置", "P1: wiggle or click your own device") : T("請 P2 晃動或點一下另一支裝置", "P2: wiggle or click the other device"), 0, 134, 26, Color.Yellow, true);
     DrawTextC(T($"偵測到的指向裝置：{RawMouse.Devices.Count}（滑鼠各自獨立；觸控板需 Precision 驅動支援）", $"Pointing devices detected: {RawMouse.Devices.Count} (mice are separate; touchpads need Precision drivers)"), 0, 178, 20, Color.SkyBlue, true);
     int y = 216;
     foreach (var d in RawMouse.Devices.Values.OrderBy(v => v.Index))
     {
         string type = d.IsTouch ? T("觸控板", "touchpad") : T("滑鼠", "mouse");
-        string who = d.Handle == p1Mouse ? "  → P1" : d.Handle == p2Mouse ? "  → P2" : "";
+        string who = (p1Mouse != IntPtr.Zero && RawMouse.SameGroup(d.Handle, p1Mouse)) ? "  → P1"
+            : (p2Mouse != IntPtr.Zero && RawMouse.SameGroup(d.Handle, p2Mouse)) ? "  → P2" : "";
         Color col = who.Length > 0 ? Color.Lime : Color.White;
         DrawTextC(T($"#{d.Index} [{type}]  移動 {d.MoveTotal}  點擊 {d.Clicks}{who}", $"#{d.Index} [{type}]  move {d.MoveTotal}  clicks {d.Clicks}{who}"), 0, y, 20, col, true);
         y += 26;
     }
     if (RawMouse.Devices.Count == 0) DrawTextC(T("（移動滑鼠或觸控板即可顯示裝置）", "(move a mouse or touchpad to list devices)"), 0, y, 20, Color.Gray, true);
-    DrawTextC(T("先各自動一動，確認是兩個不同裝置，再依序點擊指定 P1、P2", "Wiggle each to confirm two separate devices, then click to assign P1 then P2"), 0, Raylib.GetScreenHeight() - 116, 18, Color.Gray, true);
+    DrawTextC(T("先各自動一動確認是兩個不同裝置，再依序晃動（或點擊）指定 P1、P2", "Wiggle each to confirm two separate devices, then wiggle (or click) to assign P1 then P2"), 0, Raylib.GetScreenHeight() - 116, 18, Color.Gray, true);
     DrawTextC(T("P1：WASD + 裝置一    P2：方向鍵 + 裝置二", "P1: WASD + device 1    P2: Arrows + device 2"), 0, Raylib.GetScreenHeight() - 88, 20, Color.White, true);
     DrawTextC(T("ESC 返回", "ESC back"), 0, Raylib.GetScreenHeight() - 56, 20, Color.Gray, true);
 }
@@ -1845,6 +1931,8 @@ void DrawWorld3D()
     foreach (var p in pickups) if (p.Active) { Raylib.DrawCube(p.Pos + new Vector3(0, .4f, 0), 1, .3f, 1, Color.White); Raylib.DrawCube(p.Pos + new Vector3(0, .7f, 0), .25f, .7f, .25f, Color.Green); }
     foreach (var c in weaponCrates) if (c.Active) Raylib.DrawCube(c.Pos + new Vector3(0, .45f, 0), 1.1f, .9f, 1.1f, Color.Gold);
     foreach (var e in enemies) if (e.Alive) DrawEnemy(e);
+    if (mode == GameMode.Single && ally.Alive)
+        DrawAvatar(ally.Pos + new Vector3(0, EyeHeight, 0), ally.Yaw, 0, 0, 0, 0, new Color(50, 140, 225, 255), new Color(140, 200, 255, 255));
     DrawTank(playerTank, FriendlyTankBody, FriendlyTankTurret);
     if (mode != GameMode.Single) DrawTank(player2Tank, EnemyTankBody, EnemyTankTurret);
     if (mode != GameMode.Single && remote.Alive && !remote.InTank && (DateTime.UtcNow - lastPeerSeen).TotalSeconds < 3) DrawRemote();
@@ -1857,6 +1945,7 @@ void DrawWorld3D()
     DrawFlashes();
     Raylib.EndMode3D();
     if (mode == GameMode.Single) DrawEnemyHpBars(cam, eye, AimDir());
+    if (mode == GameMode.Single && ally.Alive) DrawWorldHpBar(ally.Pos + new Vector3(0, 2.45f, 0), ally.Hp / ally.MaxHp, cam, eye, AimDir(), Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), 46);
     int sw = Raylib.GetScreenWidth(), sh = Raylib.GetScreenHeight();
     if (playerTank.Alive) DrawWorldHpBar(playerTank.Pos + new Vector3(0, 3.2f, 0), playerTank.Hp / playerTank.MaxHp, cam, eye, AimDir(), sw, sh, 90);
     if (mode != GameMode.Single && player2Tank.Alive) DrawWorldHpBar(player2Tank.Pos + new Vector3(0, 3.2f, 0), player2Tank.Hp / player2Tank.MaxHp, cam, eye, AimDir(), sw, sh, 90);
@@ -2076,8 +2165,9 @@ void DrawHeldWeapon(Vector3 origin, float yaw, float pitch, int weapon, float sw
         else
         {
             Rlgl.Rotatef(70f - t * 120f, 1, 0, 0);   // raised → swung-down arc
-            Raylib.DrawCube(new Vector3(0, 0, 0.18f), 0.12f, 0.12f, 0.34f, new Color(120, 85, 55, 255));   // hilt
-            Raylib.DrawCube(new Vector3(0, 0, 0.95f), 0.06f, 0.34f, 1.05f, new Color(212, 218, 228, 255)); // blade
+            Raylib.DrawCube(new Vector3(0, 0, 0.22f), 0.05f, 0.05f, 0.44f, new Color(38, 40, 48, 255));    // 柄 wrapped handle
+            Raylib.DrawCube(new Vector3(0, 0, 0.45f), 0.18f, 0.18f, 0.04f, new Color(78, 64, 40, 255));    // 鍔 tsuba guard
+            Raylib.DrawCube(new Vector3(0, 0, 1.32f), 0.035f, 0.10f, 1.6f, new Color(214, 220, 230, 255)); // long slim katana blade
         }
     }
     else
@@ -2510,6 +2600,13 @@ class Tank
     }
 }
 
+class Ally
+{
+    public Vector3 Pos;
+    public float Yaw, Hp = 170, MaxHp = 170, FireCd, Respawn;
+    public bool Alive = true;
+}
+
 class RemotePlayer
 {
     public string Name = "對手";
@@ -2567,6 +2664,9 @@ static class RawMouse
     [DllImport("user32.dll", SetLastError = true)]
     static extern uint GetRawInputDeviceInfoW(IntPtr hDevice, uint uiCommand, IntPtr pData, ref uint pcbSize);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetRawInputDeviceInfoW")]
+    static extern uint GetRawInputDeviceNameW(IntPtr hDevice, uint uiCommand, System.Text.StringBuilder? pData, ref uint pcbSize);
+
     [DllImport("hid.dll")]
     static extern int HidP_GetUsageValue(int reportType, ushort usagePage, ushort linkCollection, ushort usage, out uint usageValue, byte[] preparsedData, byte[] report, uint reportLength);
 
@@ -2580,6 +2680,7 @@ static class RawMouse
     const uint WM_INPUT = 0x00FF;
     const uint RID_INPUT = 0x10000003;
     const uint RIDI_PREPARSEDDATA = 0x20000005;
+    const uint RIDI_DEVICENAME = 0x20000007;
     const uint RIDEV_INPUTSINK = 0x00000100;
     const int HidP_Input = 0;
     const int HIDP_STATUS_SUCCESS = 0x00110000;
@@ -2598,10 +2699,12 @@ static class RawMouse
         int _dx, _dy;
         public int Index;
         public IntPtr Handle;
+        public string Group = "";   // physical-device key (collapses a mouse's multiple HID handles into one)
         public bool IsTouch;
         public long MoveTotal;
         public int Clicks;
         public bool LeftDown, RightDown, LeftPressedThisFrame, JustClicked;
+        public long SelMove;   // movement accumulated since the select screen opened (wiggle-to-assign)
         // Precision-touchpad relative-motion tracking (digitizer reports absolute X/Y).
         public int LastX, LastY;
         public bool HasLast, TipDown;
@@ -2612,7 +2715,7 @@ static class RawMouse
             _dx = 0; _dy = 0;
             return r;
         }
-        public void Accumulate(int dx, int dy) { _dx += dx; _dy += dy; MoveTotal += Math.Abs(dx) + Math.Abs(dy); }
+        public void Accumulate(int dx, int dy) { _dx += dx; _dy += dy; long m = Math.Abs(dx) + Math.Abs(dy); MoveTotal += m; SelMove += m; }
     }
 
     public static Dictionary<IntPtr, DeviceState> Devices = new();
@@ -2668,11 +2771,54 @@ static class RawMouse
     {
         if (!Devices.TryGetValue(h, out var dev))
         {
-            dev = new DeviceState { Index = _nextIndex++, Handle = h, IsTouch = touch };
+            dev = new DeviceState { Index = _nextIndex++, Handle = h, IsTouch = touch, Group = GroupKey(h) };
             Devices[h] = dev;
         }
         if (touch) dev.IsTouch = true;
         return dev;
+    }
+
+    // A key identifying the physical device. Many mice expose several Raw Input handles
+    // (one for movement, one for buttons); they share a device name that differs only by
+    // the &ColNN / &MI_NN collection token, so stripping those groups them together.
+    static string GroupKey(IntPtr h)
+    {
+        try
+        {
+            uint size = 0;
+            GetRawInputDeviceNameW(h, RIDI_DEVICENAME, null, ref size);   // size in characters
+            if (size == 0 || size > 4000) return h.ToString();
+            var sb = new System.Text.StringBuilder((int)size + 1);
+            if (GetRawInputDeviceNameW(h, RIDI_DEVICENAME, sb, ref size) == 0xFFFFFFFF) return h.ToString();
+            string s = sb.ToString().ToLowerInvariant();
+            int g = s.LastIndexOf('#');                                   // drop the interface {guid}
+            if (g > 0) s = s.Substring(0, g);
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"&(col\d+|mi_\d+)", "");
+            return string.IsNullOrEmpty(s) ? h.ToString() : s;
+        }
+        catch { return h.ToString(); }
+    }
+
+    public static bool SameGroup(IntPtr a, IntPtr b)
+        => a == b || (Devices.TryGetValue(a, out var da) && Devices.TryGetValue(b, out var db) && da.Group == db.Group);
+
+    // Aggregate movement + buttons across every handle of the physical device that owns
+    // `anyHandle`, so the assigned (click) handle and the (separate) movement handle act
+    // as one mouse. Consumes the deltas/pressed-flags it reads.
+    public static bool TryReadGroup(IntPtr anyHandle, out int dx, out int dy, out bool leftDown, out bool leftPressed, out bool rightDown)
+    {
+        dx = dy = 0; leftDown = leftPressed = rightDown = false;
+        if (anyHandle == IntPtr.Zero || !Devices.TryGetValue(anyHandle, out var anchor)) return false;
+        foreach (var d in Devices.Values)
+        {
+            if (d.Group != anchor.Group) continue;
+            var (ddx, ddy) = d.ConsumeDelta();
+            dx += ddx; dy += ddy;
+            leftDown |= d.LeftDown;
+            leftPressed |= d.LeftPressedThisFrame;
+            rightDown |= d.RightDown;
+        }
+        return true;
     }
 
     static void ProcessInput(IntPtr lParam)
@@ -2789,5 +2935,11 @@ static class RawMouse
     public static void NewFrame()
     {
         foreach (var d in Devices.Values) d.LeftPressedThisFrame = false;
+    }
+
+    // Reset the wiggle/click accumulators when the device-assignment screen opens.
+    public static void BeginSelect()
+    {
+        foreach (var d in Devices.Values) { d.SelMove = 0; d.JustClicked = false; d.LeftPressedThisFrame = false; }
     }
 }
